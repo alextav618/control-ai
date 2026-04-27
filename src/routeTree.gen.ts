@@ -15,6 +15,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppTransactionsRouteImport } from './routes/app.transactions'
 import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
+import { Route as AppBillsRouteImport } from './routes/app.bills'
+import { Route as AppAccountsRouteImport } from './routes/app.accounts'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -46,11 +48,23 @@ const AppDashboardRoute = AppDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
+const AppBillsRoute = AppBillsRouteImport.update({
+  id: '/bills',
+  path: '/bills',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
+  '/app/accounts': typeof AppAccountsRoute
+  '/app/bills': typeof AppBillsRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
@@ -58,6 +72,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/app/accounts': typeof AppAccountsRoute
+  '/app/bills': typeof AppBillsRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app': typeof AppIndexRoute
@@ -67,6 +83,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
+  '/app/accounts': typeof AppAccountsRoute
+  '/app/bills': typeof AppBillsRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
@@ -77,16 +95,27 @@ export interface FileRouteTypes {
     | '/'
     | '/app'
     | '/auth'
+    | '/app/accounts'
+    | '/app/bills'
     | '/app/dashboard'
     | '/app/transactions'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/app/dashboard' | '/app/transactions' | '/app'
+  to:
+    | '/'
+    | '/auth'
+    | '/app/accounts'
+    | '/app/bills'
+    | '/app/dashboard'
+    | '/app/transactions'
+    | '/app'
   id:
     | '__root__'
     | '/'
     | '/app'
     | '/auth'
+    | '/app/accounts'
+    | '/app/bills'
     | '/app/dashboard'
     | '/app/transactions'
     | '/app/'
@@ -142,16 +171,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/bills': {
+      id: '/app/bills'
+      path: '/bills'
+      fullPath: '/app/bills'
+      preLoaderRoute: typeof AppBillsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/accounts': {
+      id: '/app/accounts'
+      path: '/accounts'
+      fullPath: '/app/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAccountsRoute: typeof AppAccountsRoute
+  AppBillsRoute: typeof AppBillsRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccountsRoute: AppAccountsRoute,
+  AppBillsRoute: AppBillsRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppTransactionsRoute: AppTransactionsRoute,
   AppIndexRoute: AppIndexRoute,
