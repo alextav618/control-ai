@@ -19,7 +19,28 @@ function createSupabaseClient() {
       storage: typeof window !== 'undefined' ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
-    }
+    },
+    global: {
+      // Retry simples para falhas transitórias (ex: schema cache miss)
+      fetch: async (input, init) => {
+        let lastErr: any;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            const res = await fetch(input, init);
+            // Retry apenas em 5xx (erros transitórios do servidor)
+            if (res.status >= 500 && res.status < 600 && attempt < 2) {
+              await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+              continue;
+            }
+            return res;
+          } catch (e) {
+            lastErr = e;
+            await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+          }
+        }
+        throw lastErr;
+      },
+    },
   });
 }
 

@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/auth")({
-  validateSearch: (search: Record<string, unknown>) => ({
+  validateSearch: (search: Record<string, unknown>): { mode?: "login" | "signup" } => ({
     mode: (search.mode as string) === "signup" ? "signup" : "login",
   }),
   component: AuthPage,

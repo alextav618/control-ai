@@ -17,18 +17,22 @@ function Dashboard() {
     queryKey: ["dashboard", user?.id],
     queryFn: async () => {
       const now = new Date();
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      const [accR, txR, openInvR, billsR] = await Promise.all([
+      const month = now.getMonth() + 1;
+      const year = now.getFullYear();
+      const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+      const [accR, txR, openInvR, billsR, occR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        supabase.from("transactions").select("*, categories(name, icon, color)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("invoices").select("*, accounts(name)").eq("status", "open"),
         supabase.from("fixed_bills").select("*").eq("active", true),
+        supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
       ]);
       return {
         accounts: accR.data ?? [],
         transactions: txR.data ?? [],
         openInvoices: openInvR.data ?? [],
         bills: billsR.data ?? [],
+        occs: occR.data ?? [],
       };
     },
     enabled: !!user,
@@ -39,6 +43,11 @@ function Dashboard() {
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
   const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
+
+  // Despesas separadas por origem
+  const cardExpense = tx.filter((t: any) => t.type === "expense" && t.accounts?.type === "credit_card").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const variableExpense = expense - cardExpense - fixedExpense;
 
   // Por categoria
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
@@ -52,9 +61,9 @@ function Dashboard() {
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
   const maxCat = catList[0]?.total ?? 1;
 
-  // Pendências do mês (contas fixas sem transação no mês atual)
-  const paidBills = new Set(tx.filter((t: any) => t.fixed_bill_id).map((t: any) => t.fixed_bill_id));
-  const pending = (data?.bills ?? []).filter((b: any) => !paidBills.has(b.id));
+  // Pendências do mês — usa ocorrências como fonte de verdade
+  const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
+  const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
   const now = new Date();
   const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
@@ -72,6 +81,13 @@ function Dashboard() {
         <Kpi label="Receita do mês" value={formatBRL(income)} icon={TrendingUp} accent="income" />
         <Kpi label="Despesa do mês" value={formatBRL(expense)} icon={TrendingDown} accent="expense" />
         <Kpi label="Resultado" value={formatBRL(balance)} accent={balance >= 0 ? "income" : "expense"} />
+      </div>
+
+      {/* Despesas por origem */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <BreakdownCard label="Despesas fixas" value={fixedExpense} total={expense} color="bg-audit-yellow" />
+        <BreakdownCard label="Despesas variáveis" value={variableExpense} total={expense} color="bg-primary" />
+        <BreakdownCard label="Cartão de crédito" value={cardExpense} total={expense} color="bg-expense" />
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -159,4 +175,20 @@ function Card({ title, children, className }: { title: string; children: React.R
 
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="text-sm text-muted-foreground py-2">{children}</div>;
+}
+
+function BreakdownCard({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
+  return (
+    <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+      </div>
+      <div className="mt-2 font-mono tabular text-xl font-semibold">{formatBRL(value)}</div>
+      <div className="mt-3 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
 }
