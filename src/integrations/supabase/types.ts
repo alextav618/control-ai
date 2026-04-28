@@ -180,6 +180,7 @@ export type Database = {
       fixed_bills: {
         Row: {
           active: boolean
+          amount_kind: string
           category_id: string | null
           created_at: string
           default_account_id: string | null
@@ -193,6 +194,7 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          amount_kind?: string
           category_id?: string | null
           created_at?: string
           default_account_id?: string | null
@@ -206,6 +208,7 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          amount_kind?: string
           category_id?: string | null
           created_at?: string
           default_account_id?: string | null
@@ -364,6 +367,60 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      recurring_occurrences: {
+        Row: {
+          amount: number | null
+          created_at: string
+          fixed_bill_id: string
+          id: string
+          reference_month: number
+          reference_year: number
+          status: string
+          transaction_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount?: number | null
+          created_at?: string
+          fixed_bill_id: string
+          id?: string
+          reference_month: number
+          reference_year: number
+          status?: string
+          transaction_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number | null
+          created_at?: string
+          fixed_bill_id?: string
+          id?: string
+          reference_month?: number
+          reference_year?: number
+          status?: string
+          transaction_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recurring_occurrences_fixed_bill_id_fkey"
+            columns: ["fixed_bill_id"]
+            isOneToOne: false
+            referencedRelation: "fixed_bills"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recurring_occurrences_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       transactions: {
         Row: {
