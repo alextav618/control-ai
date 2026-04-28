@@ -22,8 +22,8 @@ function Landing() {
             Ledger
           </Link>
           <div className="flex items-center gap-3">
-            <Link to="/auth"><Button variant="ghost">Entrar</Button></Link>
-            <Link to="/auth" search={{ mode: "signup" } as never}><Button>Criar conta</Button></Link>
+            <Link to="/auth" search={{ mode: "login" }}><Button variant="ghost">Entrar</Button></Link>
+            <Link to="/auth" search={{ mode: "signup" }}><Button>Criar conta</Button></Link>
           </div>
         </div>
       </header>
@@ -44,10 +44,10 @@ function Landing() {
           vincula à fatura certa e te avisa se algo fugiu do orçamento. Zero planilha.
         </p>
         <div className="mt-10 flex items-center justify-center gap-3">
-          <Link to="/auth" search={{ mode: "signup" } as never}>
+          <Link to="/auth" search={{ mode: "signup" }}>
             <Button size="lg" className="text-base px-8 shadow-glow">Começar agora</Button>
           </Link>
-          <Link to="/auth"><Button size="lg" variant="outline" className="text-base px-8">Já tenho conta</Button></Link>
+          <Link to="/auth" search={{ mode: "login" }}><Button size="lg" variant="outline" className="text-base px-8">Já tenho conta</Button></Link>
         </div>
       </section>
 
