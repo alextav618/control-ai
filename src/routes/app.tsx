@@ -1,8 +1,9 @@
 import { createFileRoute, Outlet, Link, useNavigate, useLocation } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, LayoutDashboard, Wallet, Receipt, LogOut, ListChecks } from "lucide-react";
+import { MessageSquare, LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -11,11 +12,12 @@ export const Route = createFileRoute("/app")({
 
 function AppLayout() {
   const { user, loading, signOut } = useAuth();
+  const { theme, toggle } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    if (!loading && !user) navigate({ to: "/auth" });
+    if (!loading && !user) navigate({ to: "/auth", search: { mode: "login" } });
   }, [loading, user, navigate]);
 
   if (loading || !user) {
@@ -27,7 +29,9 @@ function AppLayout() {
     { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/app/transactions", label: "Lançamentos", icon: Receipt },
     { to: "/app/accounts", label: "Contas e Cartões", icon: Wallet },
-    { to: "/app/bills", label: "Contas fixas", icon: ListChecks },
+    { to: "/app/categories", label: "Categorias", icon: Tags },
+    { to: "/app/bills", label: "Recorrentes", icon: ListChecks },
+    { to: "/app/investments", label: "Investimentos", icon: TrendingUp },
   ];
 
   return (
@@ -63,10 +67,19 @@ function AppLayout() {
             );
           })}
         </nav>
-        <div className="p-3 border-t border-sidebar-border">
+        <div className="p-3 border-t border-sidebar-border space-y-1">
           <div className="px-3 py-2 text-xs text-sidebar-foreground/60 truncate">
             {user.email}
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start text-sidebar-foreground/70"
+            onClick={toggle}
+          >
+            {theme === "dark" ? <Sun className="h-4 w-4 mr-2" /> : <Moon className="h-4 w-4 mr-2" />}
+            {theme === "dark" ? "Tema claro" : "Tema escuro"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -89,9 +102,14 @@ function AppLayout() {
             <span className="h-7 w-7 rounded-md bg-gradient-primary flex items-center justify-center text-primary-foreground text-sm">L</span>
             Ledger
           </Link>
-          <Button variant="ghost" size="sm" onClick={async () => { await signOut(); navigate({ to: "/" }); }}>
-            <LogOut className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={toggle}>
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={async () => { await signOut(); navigate({ to: "/" }); }}>
+              <LogOut className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
         <div className="flex overflow-x-auto px-2 pb-2 gap-1">
           {nav.map((item) => {
