@@ -176,3 +176,19 @@ function Card({ title, children, className }: { title: string; children: React.R
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="text-sm text-muted-foreground py-2">{children}</div>;
 }
+
+function BreakdownCard({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
+  const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
+  return (
+    <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+      </div>
+      <div className="mt-2 font-mono tabular text-xl font-semibold">{formatBRL(value)}</div>
+      <div className="mt-3 h-1.5 rounded-full bg-surface-2 overflow-hidden">
+        <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
