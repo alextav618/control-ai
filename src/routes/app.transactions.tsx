@@ -178,7 +178,7 @@ function TxPage() {
       });
     }
 
-    const { error } = await supabase.from("transactions").insert(rows);
+    const { error } = await supabase.from("transactions").insert(rows as any);
     if (error) { toast.error(error.message); return; }
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
