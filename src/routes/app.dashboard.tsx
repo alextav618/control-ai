@@ -17,18 +17,22 @@ function Dashboard() {
     queryKey: ["dashboard", user?.id],
     queryFn: async () => {
       const now = new Date();
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      const [accR, txR, openInvR, billsR] = await Promise.all([
+      const month = now.getMonth() + 1;
+      const year = now.getFullYear();
+      const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+      const [accR, txR, openInvR, billsR, occR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        supabase.from("transactions").select("*, categories(name, icon, color)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("invoices").select("*, accounts(name)").eq("status", "open"),
         supabase.from("fixed_bills").select("*").eq("active", true),
+        supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
       ]);
       return {
         accounts: accR.data ?? [],
         transactions: txR.data ?? [],
         openInvoices: openInvR.data ?? [],
         bills: billsR.data ?? [],
+        occs: occR.data ?? [],
       };
     },
     enabled: !!user,
@@ -39,6 +43,11 @@ function Dashboard() {
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
   const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
+
+  // Despesas separadas por origem
+  const cardExpense = tx.filter((t: any) => t.type === "expense" && t.accounts?.type === "credit_card").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const variableExpense = expense - cardExpense - fixedExpense;
 
   // Por categoria
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
@@ -52,9 +61,9 @@ function Dashboard() {
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
   const maxCat = catList[0]?.total ?? 1;
 
-  // Pendências do mês (contas fixas sem transação no mês atual)
-  const paidBills = new Set(tx.filter((t: any) => t.fixed_bill_id).map((t: any) => t.fixed_bill_id));
-  const pending = (data?.bills ?? []).filter((b: any) => !paidBills.has(b.id));
+  // Pendências do mês — usa ocorrências como fonte de verdade
+  const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
+  const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
   const now = new Date();
   const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
