@@ -291,6 +291,136 @@ export type Database = {
           },
         ]
       }
+      investment_assets: {
+        Row: {
+          archived: boolean
+          created_at: string
+          id: string
+          indexer: Database["public"]["Enums"]["asset_indexer"]
+          institution: string | null
+          maturity_date: string | null
+          name: string
+          notes: string | null
+          rate: number | null
+          ticker: string | null
+          type: Database["public"]["Enums"]["asset_type"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived?: boolean
+          created_at?: string
+          id?: string
+          indexer?: Database["public"]["Enums"]["asset_indexer"]
+          institution?: string | null
+          maturity_date?: string | null
+          name: string
+          notes?: string | null
+          rate?: number | null
+          ticker?: string | null
+          type?: Database["public"]["Enums"]["asset_type"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived?: boolean
+          created_at?: string
+          id?: string
+          indexer?: Database["public"]["Enums"]["asset_indexer"]
+          institution?: string | null
+          maturity_date?: string | null
+          name?: string
+          notes?: string | null
+          rate?: number | null
+          ticker?: string | null
+          type?: Database["public"]["Enums"]["asset_type"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      investment_movements: {
+        Row: {
+          amount: number
+          asset_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          occurred_on: string
+          quantity: number | null
+          type: Database["public"]["Enums"]["movement_type"]
+          unit_price: number | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          asset_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          occurred_on?: string
+          quantity?: number | null
+          type: Database["public"]["Enums"]["movement_type"]
+          unit_price?: number | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          asset_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          occurred_on?: string
+          quantity?: number | null
+          type?: Database["public"]["Enums"]["movement_type"]
+          unit_price?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investment_movements_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "investment_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      investment_snapshots: {
+        Row: {
+          asset_id: string
+          created_at: string
+          id: string
+          market_value: number
+          snapshot_date: string
+          user_id: string
+        }
+        Insert: {
+          asset_id: string
+          created_at?: string
+          id?: string
+          market_value: number
+          snapshot_date?: string
+          user_id: string
+        }
+        Update: {
+          asset_id?: string
+          created_at?: string
+          id?: string
+          market_value?: number
+          snapshot_date?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investment_snapshots_asset_id_fkey"
+            columns: ["asset_id"]
+            isOneToOne: false
+            referencedRelation: "investment_assets"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           account_id: string
@@ -539,9 +669,25 @@ export type Database = {
     }
     Enums: {
       account_type: "cash" | "checking" | "savings" | "credit_card" | "other"
+      asset_indexer: "cdi" | "ipca" | "selic" | "prefixed" | "none"
+      asset_type:
+        | "fixed_income"
+        | "stock"
+        | "reit"
+        | "crypto"
+        | "fund"
+        | "treasury"
+        | "other"
       audit_level: "green" | "yellow" | "red"
       invoice_status: "open" | "closed" | "paid"
       message_role: "user" | "assistant" | "system"
+      movement_type:
+        | "deposit"
+        | "withdrawal"
+        | "interest"
+        | "dividend"
+        | "fee"
+        | "tax"
       transaction_status: "pending" | "paid" | "received" | "scheduled"
       transaction_type: "expense" | "income" | "transfer"
     }
@@ -672,9 +818,27 @@ export const Constants = {
   public: {
     Enums: {
       account_type: ["cash", "checking", "savings", "credit_card", "other"],
+      asset_indexer: ["cdi", "ipca", "selic", "prefixed", "none"],
+      asset_type: [
+        "fixed_income",
+        "stock",
+        "reit",
+        "crypto",
+        "fund",
+        "treasury",
+        "other",
+      ],
       audit_level: ["green", "yellow", "red"],
       invoice_status: ["open", "closed", "paid"],
       message_role: ["user", "assistant", "system"],
+      movement_type: [
+        "deposit",
+        "withdrawal",
+        "interest",
+        "dividend",
+        "fee",
+        "tax",
+      ],
       transaction_status: ["pending", "paid", "received", "scheduled"],
       transaction_type: ["expense", "income", "transfer"],
     },
