@@ -83,6 +83,13 @@ function Dashboard() {
         <Kpi label="Resultado" value={formatBRL(balance)} accent={balance >= 0 ? "income" : "expense"} />
       </div>
 
+      {/* Despesas por origem */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <BreakdownCard label="Despesas fixas" value={fixedExpense} total={expense} color="bg-audit-yellow" />
+        <BreakdownCard label="Despesas variáveis" value={variableExpense} total={expense} color="bg-primary" />
+        <BreakdownCard label="Cartão de crédito" value={cardExpense} total={expense} color="bg-expense" />
+      </div>
+
       <div className="grid md:grid-cols-2 gap-4">
         {/* Faturas abertas */}
         <Card title="Faturas em aberto">
