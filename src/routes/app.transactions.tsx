@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR } from "@/lib/format";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,6 +51,7 @@ function TxPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({
     type: "expense",
     description: "",
@@ -60,6 +61,27 @@ function TxPage() {
     category_id: "",
     installments: "1",
   });
+
+  const resetForm = () => {
+    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
+    setEditId(null);
+  };
+
+  const openEdit = (t: any) => {
+    setEditId(t.id);
+    setForm({
+      type: t.type,
+      description: t.description,
+      amount: String(t.amount),
+      occurred_on: t.occurred_on,
+      account_id: t.account_id ?? "",
+      category_id: t.category_id ?? "",
+      installments: "1",
+    });
+    setOpen(true);
+  };
+
+  useEffect(() => { if (!open) resetForm(); }, [open]);
 
   const { data: tx = [] } = useQuery({
     queryKey: ["transactions", user?.id],
