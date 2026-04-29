@@ -330,7 +330,10 @@ function TxPage() {
                 <div className={cn("font-mono tabular font-semibold whitespace-nowrap", t.type === "income" ? "text-income" : "text-expense")}>
                   {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => remove(t.id)}>
+                <Button variant="ghost" size="icon" onClick={() => openEdit(t)} title="Editar">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => remove(t.id)} title="Excluir">
                   <Trash2 className="h-4 w-4 text-muted-foreground" />
                 </Button>
               </div>
