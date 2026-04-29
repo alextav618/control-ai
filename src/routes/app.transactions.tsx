@@ -150,6 +150,26 @@ function TxPage() {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+
+    // === EDIÇÃO ===
+    if (editId) {
+      const { error } = await supabase.from("transactions").update({
+        type: form.type,
+        description: form.description,
+        amount: Number(form.amount),
+        occurred_on: form.occurred_on,
+        account_id: form.account_id,
+        category_id: form.category_id || null,
+      }).eq("id", editId);
+      if (error) { toast.error(error.message); return; }
+      toast.success("Lançamento atualizado");
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      return;
+    }
+
     const account = accounts.find((a: any) => a.id === form.account_id);
     if (!account) return;
     const totalAmount = Number(form.amount);
@@ -204,7 +224,6 @@ function TxPage() {
     if (error) { toast.error(error.message); return; }
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
-    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
