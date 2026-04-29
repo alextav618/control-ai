@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR } from "@/lib/format";
-import { Trash2, Plus } from "lucide-react";
+import { Trash2, Plus, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,6 +51,7 @@ function TxPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({
     type: "expense",
     description: "",
@@ -60,6 +61,27 @@ function TxPage() {
     category_id: "",
     installments: "1",
   });
+
+  const resetForm = () => {
+    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
+    setEditId(null);
+  };
+
+  const openEdit = (t: any) => {
+    setEditId(t.id);
+    setForm({
+      type: t.type,
+      description: t.description,
+      amount: String(t.amount),
+      occurred_on: t.occurred_on,
+      account_id: t.account_id ?? "",
+      category_id: t.category_id ?? "",
+      installments: "1",
+    });
+    setOpen(true);
+  };
+
+  useEffect(() => { if (!open) resetForm(); }, [open]);
 
   const { data: tx = [] } = useQuery({
     queryKey: ["transactions", user?.id],
@@ -128,6 +150,26 @@ function TxPage() {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+
+    // === EDIÇÃO ===
+    if (editId) {
+      const { error } = await supabase.from("transactions").update({
+        type: form.type as any,
+        description: form.description,
+        amount: Number(form.amount),
+        occurred_on: form.occurred_on,
+        account_id: form.account_id,
+        category_id: form.category_id || null,
+      }).eq("id", editId);
+      if (error) { toast.error(error.message); return; }
+      toast.success("Lançamento atualizado");
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      return;
+    }
+
     const account = accounts.find((a: any) => a.id === form.account_id);
     if (!account) return;
     const totalAmount = Number(form.amount);
@@ -182,7 +224,6 @@ function TxPage() {
     if (error) { toast.error(error.message); return; }
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
-    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
@@ -193,13 +234,13 @@ function TxPage() {
   const isCardSelected = selectedAccount?.type === "credit_card";
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-display text-3xl font-bold">Lançamentos</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Lançamentos</h1>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo</Button></DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>Novo lançamento</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -219,8 +260,8 @@ function TxPage() {
               </div>
               <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado Pão de Açúcar" className="mt-1.5" /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><Label>Valor total</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
-                {form.type === "expense" && (
+                <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
+                {form.type === "expense" && !editId && (
                   <div>
                     <Label>Parcelas</Label>
                     <Input type="number" min={1} max={36} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" />
@@ -247,12 +288,12 @@ function TxPage() {
                   </Select>
                 </div>
               </div>
-              {isCardSelected && Number(form.installments) > 1 && (
+              {!editId && isCardSelected && Number(form.installments) > 1 && (
                 <p className="text-xs text-muted-foreground bg-surface-2 p-3 rounded-lg">
                   💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
                 </p>
               )}
-              <Button onClick={submit} className="w-full">Lançar</Button>
+              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -289,7 +330,10 @@ function TxPage() {
                 <div className={cn("font-mono tabular font-semibold whitespace-nowrap", t.type === "income" ? "text-income" : "text-expense")}>
                   {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => remove(t.id)}>
+                <Button variant="ghost" size="icon" onClick={() => openEdit(t)} title="Editar">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => remove(t.id)} title="Excluir">
                   <Trash2 className="h-4 w-4 text-muted-foreground" />
                 </Button>
               </div>

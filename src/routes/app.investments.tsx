@@ -150,9 +150,9 @@ function InvestmentsPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-display text-3xl font-bold">Investimentos</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Investimentos</h1>
         <Dialog open={openAsset} onOpenChange={setOpenAsset}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo ativo</Button></DialogTrigger>
           <DialogContent>
