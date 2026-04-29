@@ -154,7 +154,7 @@ function TxPage() {
     // === EDIÇÃO ===
     if (editId) {
       const { error } = await supabase.from("transactions").update({
-        type: form.type,
+        type: form.type as any,
         description: form.description,
         amount: Number(form.amount),
         occurred_on: form.occurred_on,
