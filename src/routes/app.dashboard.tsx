@@ -1,9 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/dashboard")({
@@ -13,23 +14,27 @@ export const Route = createFileRoute("/app/dashboard")({
 function Dashboard() {
   const { user } = useAuth();
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["dashboard", user?.id],
     queryFn: async () => {
       const now = new Date();
       const month = now.getMonth() + 1;
       const year = now.getFullYear();
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-      const [accR, txR, openInvR, billsR, occR] = await Promise.all([
+      // Para projeção: pegar parcelas futuras (próximos 90 dias)
+      const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
+      const [accR, txR, futureTxR, openInvR, billsR, occR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
-        supabase.from("invoices").select("*, accounts(name)").eq("status", "open"),
+        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type, name)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
+        supabase.from("invoices").select("*, accounts(name)").in("status", ["open", "closed"]),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
       ]);
       return {
         accounts: accR.data ?? [],
         transactions: txR.data ?? [],
+        futureTx: futureTxR.data ?? [],
         openInvoices: openInvR.data ?? [],
         bills: billsR.data ?? [],
         occs: occR.data ?? [],
@@ -44,12 +49,10 @@ function Dashboard() {
   const balance = income - expense;
   const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
 
-  // Despesas separadas por origem
   const cardExpense = tx.filter((t: any) => t.type === "expense" && t.accounts?.type === "credit_card").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
   const variableExpense = expense - cardExpense - fixedExpense;
 
-  // Por categoria
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
   tx.filter((t: any) => t.type === "expense").forEach((t: any) => {
     const k = t.category_id ?? "none";
@@ -61,22 +64,61 @@ function Dashboard() {
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
   const maxCat = catList[0]?.total ?? 1;
 
-  // Pendências do mês — usa ocorrências como fonte de verdade
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
+
+  // === PROJEÇÃO 3 MESES ===
+  const projection = useMemo(() => {
+    if (!data) return [];
+    const now = new Date();
+    const months: { label: string; month: number; year: number; recurring: number; installments: number; invoices: number; total: number }[] = [];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+      const m = d.getMonth() + 1;
+      const y = d.getFullYear();
+      // Recorrentes do mês (todas as ativas)
+      const recurring = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
+      // Parcelas futuras que caem nesse mês (a partir das transactions com installment_plan_id)
+      const installments = (data.futureTx as any[])
+        .filter((t) => {
+          const td = new Date(t.occurred_on);
+          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
+        })
+        .reduce((s, t) => s + Number(t.amount), 0);
+      // Faturas em aberto que vencem nesse mês
+      const invoices = (data.openInvoices as any[])
+        .filter((inv) => {
+          const dd = new Date(inv.due_date);
+          return dd.getMonth() + 1 === m && dd.getFullYear() === y;
+        })
+        .reduce((s, inv) => s + Number(inv.total_amount), 0);
+      months.push({
+        label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
+        month: m,
+        year: y,
+        recurring,
+        installments,
+        invoices,
+        total: recurring + installments + invoices,
+      });
+    }
+    return months;
+  }, [data]);
+
+  const maxProj = Math.max(1, ...projection.map((p) => p.total));
 
   const now = new Date();
   const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
       <div>
-        <h1 className="font-display text-3xl font-bold">Dashboard</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Dashboard</h1>
         <p className="text-muted-foreground text-sm mt-1">{monthLabel}</p>
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Kpi label="Saldo em conta" value={formatBRL(totalCashBalance)} icon={Wallet} />
         <Kpi label="Receita do mês" value={formatBRL(income)} icon={TrendingUp} accent="income" />
         <Kpi label="Despesa do mês" value={formatBRL(expense)} icon={TrendingDown} accent="expense" />
@@ -84,51 +126,90 @@ function Dashboard() {
       </div>
 
       {/* Despesas por origem */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
         <BreakdownCard label="Despesas fixas" value={fixedExpense} total={expense} color="bg-audit-yellow" />
         <BreakdownCard label="Despesas variáveis" value={variableExpense} total={expense} color="bg-primary" />
         <BreakdownCard label="Cartão de crédito" value={cardExpense} total={expense} color="bg-expense" />
       </div>
 
+      {/* PROJEÇÃO 3 MESES */}
+      <Card title="Projeção dos próximos meses" icon={CalendarClock}>
+        <p className="text-xs text-muted-foreground mb-4">Soma de recorrentes ativas, parcelas futuras e faturas em aberto.</p>
+        <div className="grid grid-cols-3 gap-3">
+          {projection.map((p) => (
+            <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4">
+              <div className="text-xs text-muted-foreground capitalize">{p.label}</div>
+              <div className="font-mono tabular text-lg md:text-xl font-bold mt-1">{formatBRL(p.total)}</div>
+              <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden flex">
+                <div className="h-full bg-audit-yellow" style={{ width: `${(p.recurring / maxProj) * 100}%` }} />
+                <div className="h-full bg-expense" style={{ width: `${(p.invoices / maxProj) * 100}%` }} />
+                <div className="h-full bg-primary" style={{ width: `${(p.installments / maxProj) * 100}%` }} />
+              </div>
+              <div className="mt-2 space-y-0.5 text-[10px] md:text-xs text-muted-foreground">
+                <div className="flex justify-between"><span>● Recorrentes</span><span className="font-mono">{formatBRL(p.recurring)}</span></div>
+                <div className="flex justify-between"><span>● Faturas</span><span className="font-mono">{formatBRL(p.invoices)}</span></div>
+                <div className="flex justify-between"><span>● Parcelas</span><span className="font-mono">{formatBRL(p.installments)}</span></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       <div className="grid md:grid-cols-2 gap-4">
-        {/* Faturas abertas */}
         <Card title="Faturas em aberto">
           {data?.openInvoices.length === 0 && <Empty>Sem faturas em aberto.</Empty>}
           <div className="space-y-2">
-            {data?.openInvoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
-                <div>
-                  <div className="font-medium">{inv.accounts?.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    Fecha {new Date(inv.closing_date).toLocaleDateString("pt-BR")} · vence {new Date(inv.due_date).toLocaleDateString("pt-BR")}
+            {data?.openInvoices.map((inv: any) => {
+              const due = new Date(inv.due_date);
+              const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+              const urgent = days >= 0 && days <= 5;
+              const overdue = days < 0;
+              return (
+                <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate flex items-center gap-2">
+                      {inv.accounts?.name}
+                      {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red">vencida</span>}
+                      {urgent && !overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      vence {new Date(inv.due_date).toLocaleDateString("pt-BR")}
+                    </div>
                   </div>
+                  <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount))}</div>
                 </div>
-                <div className="font-mono tabular font-semibold text-expense">{formatBRL(Number(inv.total_amount))}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
-        {/* Pendências */}
-        <Card title="Contas fixas pendentes">
-          {pending.length === 0 && <Empty>Tudo pago neste mês ✓</Empty>}
+        <Card title="Recorrentes pendentes">
+          {pending.length === 0 && <Empty>Tudo em dia neste mês ✓</Empty>}
           <div className="space-y-2">
-            {pending.map((b: any) => (
-              <div key={b.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-audit-yellow" />
-                  <div>
-                    <div className="font-medium">{b.name}</div>
-                    <div className="text-xs text-muted-foreground">Vence dia {b.due_day}</div>
+            {pending.map((b: any) => {
+              const today = new Date();
+              const dueDate = new Date(today.getFullYear(), today.getMonth(), Math.min(b.due_day, 28));
+              const days = Math.ceil((dueDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+              const urgent = days >= 0 && days <= 3;
+              const overdue = days < 0;
+              return (
+                <div key={b.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <AlertCircle className={cn("h-4 w-4 shrink-0", overdue ? "text-audit-red" : urgent ? "text-audit-yellow" : "text-muted-foreground")} />
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{b.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {overdue ? `atrasada ${Math.abs(days)}d` : days === 0 ? "vence hoje" : `vence em ${days}d`}
+                      </div>
+                    </div>
                   </div>
+                  <div className="font-mono tabular text-muted-foreground whitespace-nowrap">{b.amount_kind === "variable" ? "—" : formatBRL(Number(b.expected_amount))}</div>
                 </div>
-                <div className="font-mono tabular text-muted-foreground">{formatBRL(Number(b.expected_amount))}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
 
-        {/* Por categoria */}
         <Card title="Gastos por categoria" className="md:col-span-2">
           {catList.length === 0 && <Empty>Sem gastos neste mês.</Empty>}
           <div className="space-y-3">
@@ -139,35 +220,40 @@ function Dashboard() {
                   <span className="font-mono tabular">{formatBRL(c.total)}</span>
                 </div>
                 <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
-                  <div className="h-full bg-gradient-primary rounded-full" style={{ width: `${(c.total / maxCat) * 100}%` }} />
+                  <div className="h-full bg-gradient-primary rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%` }} />
                 </div>
               </div>
             ))}
           </div>
         </Card>
       </div>
+
+      {isLoading && <div className="text-center text-sm text-muted-foreground py-4">Carregando…</div>}
     </div>
   );
 }
 
 function Kpi({ label, value, icon: Icon, accent }: { label: string; value: string; icon?: any; accent?: "income" | "expense" }) {
   return (
-    <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
+    <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:shadow-elegant transition-shadow">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{label}</span>
         {Icon && <Icon className="h-4 w-4" />}
       </div>
-      <div className={cn("mt-2 font-mono tabular text-2xl font-semibold", accent === "income" && "text-income", accent === "expense" && "text-expense")}>
+      <div className={cn("mt-2 font-mono tabular text-xl md:text-2xl font-semibold", accent === "income" && "text-income", accent === "expense" && "text-expense")}>
         {value}
       </div>
     </div>
   );
 }
 
-function Card({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
+function Card({ title, children, className, icon: Icon }: { title: string; children: React.ReactNode; className?: string; icon?: any }) {
   return (
-    <div className={cn("rounded-2xl border border-border bg-surface-1 p-5 shadow-card", className)}>
-      <h2 className="font-display font-semibold mb-4">{title}</h2>
+    <div className={cn("rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card", className)}>
+      <h2 className="font-display font-semibold mb-4 flex items-center gap-2">
+        {Icon && <Icon className="h-4 w-4 text-primary" />}
+        {title}
+      </h2>
       {children}
     </div>
   );
@@ -180,14 +266,14 @@ function Empty({ children }: { children: React.ReactNode }) {
 function BreakdownCard({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
   const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
   return (
-    <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
+    <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:shadow-elegant transition-shadow">
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">{label}</span>
-        <span className="text-xs text-muted-foreground">{pct.toFixed(0)}%</span>
+        <span className="text-xs text-muted-foreground font-mono">{pct.toFixed(0)}%</span>
       </div>
-      <div className="mt-2 font-mono tabular text-xl font-semibold">{formatBRL(value)}</div>
+      <div className="mt-2 font-mono tabular text-lg md:text-xl font-semibold">{formatBRL(value)}</div>
       <div className="mt-3 h-1.5 rounded-full bg-surface-2 overflow-hidden">
-        <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
+        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
