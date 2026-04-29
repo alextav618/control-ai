@@ -234,13 +234,13 @@ function TxPage() {
   const isCardSelected = selectedAccount?.type === "credit_card";
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-display text-3xl font-bold">Lançamentos</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Lançamentos</h1>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo</Button></DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>Novo lançamento</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -260,8 +260,8 @@ function TxPage() {
               </div>
               <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado Pão de Açúcar" className="mt-1.5" /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><Label>Valor total</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
-                {form.type === "expense" && (
+                <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
+                {form.type === "expense" && !editId && (
                   <div>
                     <Label>Parcelas</Label>
                     <Input type="number" min={1} max={36} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" />
@@ -288,12 +288,12 @@ function TxPage() {
                   </Select>
                 </div>
               </div>
-              {isCardSelected && Number(form.installments) > 1 && (
+              {!editId && isCardSelected && Number(form.installments) > 1 && (
                 <p className="text-xs text-muted-foreground bg-surface-2 p-3 rounded-lg">
                   💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
                 </p>
               )}
-              <Button onClick={submit} className="w-full">Lançar</Button>
+              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
             </div>
           </DialogContent>
         </Dialog>
