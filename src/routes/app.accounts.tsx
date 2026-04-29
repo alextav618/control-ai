@@ -70,9 +70,9 @@ function AccountsPage() {
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="font-display text-3xl font-bold">Contas e Cartões</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Contas e Cartões</h1>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" /> Nova</Button></DialogTrigger>
           <DialogContent>
