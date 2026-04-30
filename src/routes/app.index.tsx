@@ -195,6 +195,9 @@ function ChatPage() {
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["categories"] });
+      qc.invalidateQueries({ queryKey: ["fixed_bills"] });
 
       setText("");
       setImageData(null);
@@ -207,7 +210,7 @@ function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-0px)] md:h-screen">
+    <div className="flex flex-col flex-1 min-h-0 h-full">
       {/* Header */}
       <div className="border-b border-border px-6 py-4 bg-surface-1/50 backdrop-blur">
         <h1 className="font-display text-xl font-semibold">Chat</h1>
