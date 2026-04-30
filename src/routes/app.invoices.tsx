@@ -27,7 +27,7 @@ function InvoicesPage() {
   const { data: invoices = [] } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("invoices").select("*, accounts(name, type)").order("due_date", { ascending: false });
+      const { data, error } = await supabase.from("invoices").select("*, accounts!inner(name, type, archived)").eq("accounts.archived", false).order("due_date", { ascending: false });
       if (error) throw error;
       return data;
     },

@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard } from "lucide-react";
+import { MessageSquare, LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -27,6 +27,7 @@ function AppLayout() {
   const nav = [
     { to: "/app", label: "Chat", icon: MessageSquare, exact: true },
     { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { to: "/app/insights", label: "Insights", icon: Sparkles },
     { to: "/app/transactions", label: "Lançamentos", icon: Receipt },
     { to: "/app/invoices", label: "Faturas", icon: CreditCard },
     { to: "/app/accounts", label: "Contas e Cartões", icon: Wallet },
@@ -38,14 +39,14 @@ function AppLayout() {
   return (
     <div className="min-h-screen flex bg-background">
       {/* SIDEBAR */}
-      <aside className="hidden md:flex w-60 flex-col border-r border-border bg-sidebar">
+      <aside className="hidden md:flex w-60 flex-col border-r border-border bg-sidebar shrink-0">
         <div className="p-5 border-b border-sidebar-border">
           <Link to="/app" className="flex items-center gap-2 font-display font-bold">
             <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">L</span>
             Ledger
           </Link>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {nav.map((item) => {
             const active = item.exact
               ? location.pathname === item.to
@@ -97,9 +98,9 @@ function AppLayout() {
       </aside>
 
       {/* MOBILE TOP NAV */}
-      <div className="md:hidden fixed top-0 inset-x-0 z-20 border-b border-border bg-background/90 backdrop-blur">
+      <div className="md:hidden fixed top-0 inset-x-0 z-20 border-b border-border bg-background/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
-          <Link to="/app" className="flex items-center gap-2 font-display font-bold">
+          <Link to="/app" className="flex items-center gap-2 font-display font-bold text-sm">
             <span className="h-7 w-7 rounded-md bg-gradient-primary flex items-center justify-center text-primary-foreground text-sm">L</span>
             Ledger
           </Link>
@@ -112,7 +113,7 @@ function AppLayout() {
             </Button>
           </div>
         </div>
-        <div className="flex overflow-x-auto px-2 pb-2 gap-1">
+        <div className="flex overflow-x-auto px-2 pb-2 gap-1 scrollbar-none">
           {nav.map((item) => {
             const active = item.exact
               ? location.pathname === item.to
@@ -122,8 +123,8 @@ function AppLayout() {
                 key={item.to}
                 to={item.to}
                 className={cn(
-                  "px-3 py-1.5 rounded-md text-xs whitespace-nowrap",
-                  active ? "bg-accent text-foreground" : "text-muted-foreground"
+                  "px-3 py-1.5 rounded-md text-xs whitespace-nowrap shrink-0",
+                  active ? "bg-accent text-foreground font-medium" : "text-muted-foreground"
                 )}
               >
                 {item.label}
@@ -133,7 +134,7 @@ function AppLayout() {
         </div>
       </div>
 
-      <main className="flex-1 md:ml-0 pt-24 md:pt-0 min-h-screen">
+      <main className="flex-1 flex flex-col pt-[100px] md:pt-0 min-h-screen min-w-0">
         <Outlet />
       </main>
     </div>
