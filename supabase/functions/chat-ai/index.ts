@@ -128,6 +128,25 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "query_spending",
+      description: "Consulta agregada (SUM) de transações filtrando por período e/ou categoria. Use sempre que o usuário perguntar 'quanto gastei/recebi' com qualquer recorte temporal ou de categoria.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["expense", "income", "all"], description: "Tipo. Default: expense." },
+          category_name: { type: "string", description: "Nome aproximado da categoria (ex: 'mercado', 'lazer'). Opcional." },
+          category_id: { type: "string", description: "ID exato da categoria do CONTEXTO. Opcional." },
+          date_from: { type: "string", description: "Data inicial inclusiva YYYY-MM-DD." },
+          date_to: { type: "string", description: "Data final inclusiva YYYY-MM-DD." },
+          period: { type: "string", enum: ["today", "week", "month", "last_month", "year"], description: "Atalho de período. Se fornecido, ignora date_from/date_to." },
+          group_by: { type: "string", enum: ["none", "category", "account"], description: "Agrupamento. Default: none." },
+        },
+      },
+    },
+  },
 ];
 
 Deno.serve(async (req) => {
