@@ -257,6 +257,7 @@ Deno.serve(async (req) => {
     const aiText: string = choice?.message?.content ?? "";
 
     const actions: any[] = [];
+    const toolResults: Array<{ tool_call_id: string; name: string; result: any }> = [];
 
     for (const call of toolCalls) {
       const fnName = call.function?.name;
@@ -269,10 +270,37 @@ Deno.serve(async (req) => {
       } else if (fnName === "register_entity") {
         const action = await handleEntity(supabase, userId, args);
         actions.push(action);
+      } else if (fnName === "query_spending") {
+        const result = await handleQuerySpending(supabase, userId, args, ctx);
+        toolResults.push({ tool_call_id: call.id, name: fnName, result });
+        actions.push({ type: "query", query: args, result });
       }
     }
 
-    return new Response(JSON.stringify({ message: aiText, actions, ctx_summary: ctx.month_summary }), {
+    let finalText = aiText;
+    // Se houve query_spending, fazemos um segundo round-trip para o modelo redigir resposta natural
+    if (toolResults.length > 0) {
+      const followupMessages = [
+        ...messages,
+        { role: "assistant", content: aiText || null, tool_calls: toolCalls },
+        ...toolResults.map((r) => ({
+          role: "tool",
+          tool_call_id: r.tool_call_id,
+          content: JSON.stringify(r.result),
+        })),
+      ];
+      const followResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: followupMessages }),
+      });
+      if (followResp.ok) {
+        const followAi = await followResp.json();
+        finalText = followAi.choices?.[0]?.message?.content ?? finalText;
+      }
+    }
+
+    return new Response(JSON.stringify({ message: finalText, actions, ctx_summary: ctx.month_summary }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
