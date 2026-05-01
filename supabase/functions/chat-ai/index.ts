@@ -10,13 +10,14 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const SYSTEM_PROMPT = `Você é o "Ledger", um assistente financeiro pessoal de auditoria. Fala português do Brasil, tom direto, profissional, sem emoji em excesso.
+const SYSTEM_PROMPT = `Você é o "Ledger", um assistente financeiro pessoal de auditoria E também um assistente geral estilo Gemini. Fala português do Brasil, tom direto, profissional, sem emoji em excesso.
 
 REGRAS DE OPERAÇÃO (OBRIGATÓRIO):
 1. Sempre que o usuário relatar um GASTO, RECEITA, COMPRA ou TRANSFERÊNCIA — mesmo em frases curtas como "comprei X por Y", "gastei Z no cartão", "paguei a conta de luz" — você DEVE chamar a ferramenta \`register_transaction\`. NUNCA responda apenas "Ok." sem registrar quando há um lançamento implícito.
 2. Quando o usuário pedir para criar uma conta nova, cartão, conta fixa ou categoria, use \`register_entity\`.
-3. Quando o usuário PERGUNTAR algo sobre as finanças (saldo, gastos do mês, fatura, etc.), responda em texto natural usando o CONTEXTO fornecido. Se faltar dado, diga claramente.
-4. Quando NÃO houver ação clara (apenas conversa, dúvida geral), responda em texto natural sem chamar tools.
+3. Quando o usuário PERGUNTAR "quanto gastei", "qual o total em X", "quanto foi com mercado em outubro", "gastos da semana", etc., você DEVE chamar \`query_spending\` para obter o SUM real do banco — NUNCA invente números. Após receber o resultado, responda em texto natural com o valor formatado em R$.
+4. Para outras perguntas sobre finanças do usuário (saldo atual, fatura aberta, últimas transações), use o CONTEXTO já fornecido.
+5. Para perguntas GERAIS (clima, conhecimento, dúvidas, conversa, dicas, explicações, "o que é X", "me ajuda com Y"), responda livremente usando seu conhecimento geral, como o Gemini faria. Você não é restrito a finanças.
 
 VINCULAÇÃO DE CONTAS/CARTÕES:
 - Se o usuário disser "no Nubank crédito", "no cartão X", procure no CONTEXTO um account com nome parecido e type='credit_card'. Use o ID dele em account_id.
@@ -124,6 +125,25 @@ const TOOLS = [
           },
         },
         required: ["entity", "payload"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "query_spending",
+      description: "Consulta agregada (SUM) de transações filtrando por período e/ou categoria. Use sempre que o usuário perguntar 'quanto gastei/recebi' com qualquer recorte temporal ou de categoria.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["expense", "income", "all"], description: "Tipo. Default: expense." },
+          category_name: { type: "string", description: "Nome aproximado da categoria (ex: 'mercado', 'lazer'). Opcional." },
+          category_id: { type: "string", description: "ID exato da categoria do CONTEXTO. Opcional." },
+          date_from: { type: "string", description: "Data inicial inclusiva YYYY-MM-DD." },
+          date_to: { type: "string", description: "Data final inclusiva YYYY-MM-DD." },
+          period: { type: "string", enum: ["today", "week", "month", "last_month", "year"], description: "Atalho de período. Se fornecido, ignora date_from/date_to." },
+          group_by: { type: "string", enum: ["none", "category", "account"], description: "Agrupamento. Default: none." },
+        },
       },
     },
   },
@@ -237,6 +257,7 @@ Deno.serve(async (req) => {
     const aiText: string = choice?.message?.content ?? "";
 
     const actions: any[] = [];
+    const toolResults: Array<{ tool_call_id: string; name: string; result: any }> = [];
 
     for (const call of toolCalls) {
       const fnName = call.function?.name;
@@ -249,10 +270,37 @@ Deno.serve(async (req) => {
       } else if (fnName === "register_entity") {
         const action = await handleEntity(supabase, userId, args);
         actions.push(action);
+      } else if (fnName === "query_spending") {
+        const result = await handleQuerySpending(supabase, userId, args, ctx);
+        toolResults.push({ tool_call_id: call.id, name: fnName, result });
+        actions.push({ type: "query", query: args, result });
       }
     }
 
-    return new Response(JSON.stringify({ message: aiText, actions, ctx_summary: ctx.month_summary }), {
+    let finalText = aiText;
+    // Se houve query_spending, fazemos um segundo round-trip para o modelo redigir resposta natural
+    if (toolResults.length > 0) {
+      const followupMessages = [
+        ...messages,
+        { role: "assistant", content: aiText || null, tool_calls: toolCalls },
+        ...toolResults.map((r) => ({
+          role: "tool",
+          tool_call_id: r.tool_call_id,
+          content: JSON.stringify(r.result),
+        })),
+      ];
+      const followResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: followupMessages }),
+      });
+      if (followResp.ok) {
+        const followAi = await followResp.json();
+        finalText = followAi.choices?.[0]?.message?.content ?? finalText;
+      }
+    }
+
+    return new Response(JSON.stringify({ message: finalText, actions, ctx_summary: ctx.month_summary }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
@@ -411,4 +459,92 @@ async function handleEntity(supabase: any, userId: string, args: any) {
     return error ? { type: "error", message: error.message } : { type: "category", category: data };
   }
   return { type: "error", message: "Entidade desconhecida" };
+}
+
+function resolvePeriod(period?: string): { from?: string; to?: string } {
+  if (!period) return {};
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+  if (period === "today") {
+    const t = fmt(new Date(Date.UTC(y, m, d)));
+    return { from: t, to: t };
+  }
+  if (period === "week") {
+    const start = new Date(Date.UTC(y, m, d - 6));
+    return { from: fmt(start), to: fmt(new Date(Date.UTC(y, m, d))) };
+  }
+  if (period === "month") {
+    return { from: fmt(new Date(Date.UTC(y, m, 1))), to: fmt(new Date(Date.UTC(y, m + 1, 0))) };
+  }
+  if (period === "last_month") {
+    return { from: fmt(new Date(Date.UTC(y, m - 1, 1))), to: fmt(new Date(Date.UTC(y, m, 0))) };
+  }
+  if (period === "year") {
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  return {};
+}
+
+async function handleQuerySpending(supabase: any, _userId: string, args: any, ctx: any) {
+  const { from: pf, to: pt } = resolvePeriod(args.period);
+  const dateFrom = pf || args.date_from;
+  const dateTo = pt || args.date_to;
+
+  // Resolver categoria por nome
+  let categoryId: string | null = args.category_id ?? null;
+  let categoryNameMatched: string | null = null;
+  if (!categoryId && args.category_name) {
+    const needle = String(args.category_name).toLowerCase();
+    const cat = (ctx.categories ?? []).find((c: any) => c.name.toLowerCase().includes(needle) || needle.includes(c.name.toLowerCase()));
+    if (cat) { categoryId = cat.id; categoryNameMatched = cat.name; }
+  }
+
+  let q = supabase.from("transactions").select("amount, type, occurred_on, category_id, account_id");
+  if (args.type && args.type !== "all") q = q.eq("type", args.type);
+  else if (!args.type) q = q.eq("type", "expense");
+  if (categoryId) q = q.eq("category_id", categoryId);
+  if (dateFrom) q = q.gte("occurred_on", dateFrom);
+  if (dateTo) q = q.lte("occurred_on", dateTo);
+
+  const { data, error } = await q;
+  if (error) return { error: error.message };
+
+  const rows = data ?? [];
+  const total = rows.reduce((s: number, r: any) => s + Number(r.amount), 0);
+
+  let groups: Array<{ key: string; label: string; total: number; count: number }> = [];
+  if (args.group_by === "category") {
+    const map = new Map<string, { label: string; total: number; count: number }>();
+    const catName = (id: string | null) => (ctx.categories ?? []).find((c: any) => c.id === id)?.name ?? "Sem categoria";
+    for (const r of rows) {
+      const key = r.category_id ?? "none";
+      const cur = map.get(key) ?? { label: catName(r.category_id), total: 0, count: 0 };
+      cur.total += Number(r.amount); cur.count += 1;
+      map.set(key, cur);
+    }
+    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
+  } else if (args.group_by === "account") {
+    const map = new Map<string, { label: string; total: number; count: number }>();
+    const accName = (id: string | null) => (ctx.accounts ?? []).find((a: any) => a.id === id)?.name ?? "Sem conta";
+    for (const r of rows) {
+      const key = r.account_id ?? "none";
+      const cur = map.get(key) ?? { label: accName(r.account_id), total: 0, count: 0 };
+      cur.total += Number(r.amount); cur.count += 1;
+      map.set(key, cur);
+    }
+    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
+  }
+
+  return {
+    total_brl: total,
+    count: rows.length,
+    type: args.type ?? "expense",
+    category_matched: categoryNameMatched,
+    date_from: dateFrom ?? null,
+    date_to: dateTo ?? null,
+    groups,
+  };
 }
