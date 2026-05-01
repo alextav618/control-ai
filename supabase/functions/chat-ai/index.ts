@@ -460,3 +460,91 @@ async function handleEntity(supabase: any, userId: string, args: any) {
   }
   return { type: "error", message: "Entidade desconhecida" };
 }
+
+function resolvePeriod(period?: string): { from?: string; to?: string } {
+  if (!period) return {};
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+  if (period === "today") {
+    const t = fmt(new Date(Date.UTC(y, m, d)));
+    return { from: t, to: t };
+  }
+  if (period === "week") {
+    const start = new Date(Date.UTC(y, m, d - 6));
+    return { from: fmt(start), to: fmt(new Date(Date.UTC(y, m, d))) };
+  }
+  if (period === "month") {
+    return { from: fmt(new Date(Date.UTC(y, m, 1))), to: fmt(new Date(Date.UTC(y, m + 1, 0))) };
+  }
+  if (period === "last_month") {
+    return { from: fmt(new Date(Date.UTC(y, m - 1, 1))), to: fmt(new Date(Date.UTC(y, m, 0))) };
+  }
+  if (period === "year") {
+    return { from: `${y}-01-01`, to: `${y}-12-31` };
+  }
+  return {};
+}
+
+async function handleQuerySpending(supabase: any, _userId: string, args: any, ctx: any) {
+  const { from: pf, to: pt } = resolvePeriod(args.period);
+  const dateFrom = pf || args.date_from;
+  const dateTo = pt || args.date_to;
+
+  // Resolver categoria por nome
+  let categoryId: string | null = args.category_id ?? null;
+  let categoryNameMatched: string | null = null;
+  if (!categoryId && args.category_name) {
+    const needle = String(args.category_name).toLowerCase();
+    const cat = (ctx.categories ?? []).find((c: any) => c.name.toLowerCase().includes(needle) || needle.includes(c.name.toLowerCase()));
+    if (cat) { categoryId = cat.id; categoryNameMatched = cat.name; }
+  }
+
+  let q = supabase.from("transactions").select("amount, type, occurred_on, category_id, account_id");
+  if (args.type && args.type !== "all") q = q.eq("type", args.type);
+  else if (!args.type) q = q.eq("type", "expense");
+  if (categoryId) q = q.eq("category_id", categoryId);
+  if (dateFrom) q = q.gte("occurred_on", dateFrom);
+  if (dateTo) q = q.lte("occurred_on", dateTo);
+
+  const { data, error } = await q;
+  if (error) return { error: error.message };
+
+  const rows = data ?? [];
+  const total = rows.reduce((s: number, r: any) => s + Number(r.amount), 0);
+
+  let groups: Array<{ key: string; label: string; total: number; count: number }> = [];
+  if (args.group_by === "category") {
+    const map = new Map<string, { label: string; total: number; count: number }>();
+    const catName = (id: string | null) => (ctx.categories ?? []).find((c: any) => c.id === id)?.name ?? "Sem categoria";
+    for (const r of rows) {
+      const key = r.category_id ?? "none";
+      const cur = map.get(key) ?? { label: catName(r.category_id), total: 0, count: 0 };
+      cur.total += Number(r.amount); cur.count += 1;
+      map.set(key, cur);
+    }
+    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
+  } else if (args.group_by === "account") {
+    const map = new Map<string, { label: string; total: number; count: number }>();
+    const accName = (id: string | null) => (ctx.accounts ?? []).find((a: any) => a.id === id)?.name ?? "Sem conta";
+    for (const r of rows) {
+      const key = r.account_id ?? "none";
+      const cur = map.get(key) ?? { label: accName(r.account_id), total: 0, count: 0 };
+      cur.total += Number(r.amount); cur.count += 1;
+      map.set(key, cur);
+    }
+    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
+  }
+
+  return {
+    total_brl: total,
+    count: rows.length,
+    type: args.type ?? "expense",
+    category_matched: categoryNameMatched,
+    date_from: dateFrom ?? null,
+    date_to: dateTo ?? null,
+    groups,
+  };
+}
