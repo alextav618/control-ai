@@ -279,7 +279,7 @@ function ChatPage() {
                   if (!sending) send();
                 }
               }}
-              placeholder='Ex: "Mercado R$150 no Nubank crédito" ou "Quanto gastei com lazer esse mês?"'
+              placeholder="Peça ao Assistente"
               rows={1}
               className="min-h-[44px] max-h-32 resize-none"
             />
