@@ -34,10 +34,10 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Ledger — Auditoria financeira inteligente" },
+      { title: "IControl IA — Auditoria financeira inteligente" },
       { name: "description", content: "Registre gastos por texto, foto ou áudio. A IA estrutura, audita e mantém suas finanças sempre precisas." },
-      { name: "author", content: "Ledger" },
-      { property: "og:title", content: "Ledger — Auditoria financeira inteligente" },
+      { name: "author", content: "IControl IA" },
+      { property: "og:title", content: "IControl IA — Auditoria financeira inteligente" },
       { property: "og:description", content: "Registre gastos por texto, foto ou áudio. A IA estrutura, audita e mantém suas finanças sempre precisas." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },

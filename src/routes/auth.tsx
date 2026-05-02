@@ -53,7 +53,7 @@ function AuthPage() {
     <div className="min-h-screen flex items-center justify-center px-4 bg-background">
       <div className="w-full max-w-md">
         <Link to="/" className="flex items-center gap-2 font-display font-bold text-lg justify-center mb-8">
-          <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">L</span>
+          <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">I</span>
           Ledger
         </Link>
         <div className="rounded-2xl border border-border bg-surface-1 p-8 shadow-elegant">

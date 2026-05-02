@@ -228,7 +228,7 @@ function ChatPage() {
           ))}
           {sending && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground px-4">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Ledger está processando...
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> IControl IA está processando...
             </div>
           )}
         </div>

@@ -18,7 +18,7 @@ function Landing() {
       <header className="border-b border-border/50 backdrop-blur-sm sticky top-0 z-10 bg-background/80">
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 font-display font-bold text-lg">
-            <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">L</span>
+            <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">I</span>
             Ledger
           </Link>
           <div className="flex items-center gap-3">
@@ -73,7 +73,7 @@ function Landing() {
 
       <footer className="border-t border-border/50 mt-20">
         <div className="mx-auto max-w-6xl px-6 py-8 text-center text-sm text-muted-foreground">
-          © {new Date().getFullYear()} Ledger
+          © {new Date().getFullYear()} IControl IA
         </div>
       </footer>
     </div>
