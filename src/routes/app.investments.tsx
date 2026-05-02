@@ -93,9 +93,9 @@ function InvestmentsPage() {
   const { data: indexRates = [] } = useQuery({
     queryKey: ["index_rates"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("index_rates" as any).select("*");
+      const { data, error } = await (supabase as any).from("index_rates").select("*");
       if (error) throw error;
-      return data as Array<{ code: string; annual_rate: number; reference_date: string; updated_at: string; source: string | null }>;
+      return (data || []) as Array<{ code: string; annual_rate: number; reference_date: string; updated_at: string; source: string | null }>;
     },
     refetchOnWindowFocus: false,
   });
