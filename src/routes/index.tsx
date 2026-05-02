@@ -19,7 +19,7 @@ function Landing() {
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 font-display font-bold text-lg">
             <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">I</span>
-            Ledger
+            IControl IA
           </Link>
           <div className="flex items-center gap-3">
             <Link to="/auth" search={{ mode: "login" }}><Button variant="ghost">Entrar</Button></Link>
