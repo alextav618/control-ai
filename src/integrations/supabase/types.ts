@@ -237,6 +237,33 @@ export type Database = {
           },
         ]
       }
+      index_rates: {
+        Row: {
+          annual_rate: number
+          code: string
+          id: string
+          reference_date: string
+          source: string | null
+          updated_at: string
+        }
+        Insert: {
+          annual_rate: number
+          code: string
+          id?: string
+          reference_date: string
+          source?: string | null
+          updated_at?: string
+        }
+        Update: {
+          annual_rate?: number
+          code?: string
+          id?: string
+          reference_date?: string
+          source?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       installment_plans: {
         Row: {
           account_id: string | null
@@ -293,6 +320,7 @@ export type Database = {
       }
       investment_assets: {
         Row: {
+          account_id: string | null
           archived: boolean
           created_at: string
           id: string
@@ -308,6 +336,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_id?: string | null
           archived?: boolean
           created_at?: string
           id?: string
@@ -323,6 +352,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_id?: string | null
           archived?: boolean
           created_at?: string
           id?: string

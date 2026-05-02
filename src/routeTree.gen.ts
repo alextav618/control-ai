@@ -21,6 +21,7 @@ import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
 import { Route as AppCategoriesRouteImport } from './routes/app.categories'
 import { Route as AppBillsRouteImport } from './routes/app.bills'
 import { Route as AppAccountsRouteImport } from './routes/app.accounts'
+import { Route as ApiPublicHooksUpdateRatesRouteImport } from './routes/api/public/hooks/update-rates'
 
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
@@ -82,6 +83,12 @@ const AppAccountsRoute = AppAccountsRouteImport.update({
   path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
+const ApiPublicHooksUpdateRatesRoute =
+  ApiPublicHooksUpdateRatesRouteImport.update({
+    id: '/api/public/hooks/update-rates',
+    path: '/api/public/hooks/update-rates',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -96,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
+  '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -109,6 +117,7 @@ export interface FileRoutesByTo {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app': typeof AppIndexRoute
+  '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -124,6 +133,7 @@ export interface FileRoutesById {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
+  '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -140,6 +150,7 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/transactions'
     | '/app/'
+    | '/api/public/hooks/update-rates'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -153,6 +164,7 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/transactions'
     | '/app'
+    | '/api/public/hooks/update-rates'
   id:
     | '__root__'
     | '/'
@@ -167,12 +179,14 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/transactions'
     | '/app/'
+    | '/api/public/hooks/update-rates'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ApiPublicHooksUpdateRatesRoute: typeof ApiPublicHooksUpdateRatesRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -261,6 +275,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/api/public/hooks/update-rates': {
+      id: '/api/public/hooks/update-rates'
+      path: '/api/public/hooks/update-rates'
+      fullPath: '/api/public/hooks/update-rates'
+      preLoaderRoute: typeof ApiPublicHooksUpdateRatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -294,6 +315,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRoute,
+  ApiPublicHooksUpdateRatesRoute: ApiPublicHooksUpdateRatesRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

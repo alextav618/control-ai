@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Trash2, TrendingUp, TrendingDown, ChevronRight, ArrowLeft, Camera } from "lucide-react";
+import { Plus, Trash2, TrendingUp, TrendingDown, ChevronRight, ArrowLeft, Camera, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -45,13 +45,29 @@ const MOV_TYPES: Record<string, { label: string; sign: 1 | -1; color: string }> 
   tax: { label: "Imposto", sign: -1, color: "text-audit-red" },
 };
 
+// Calcula a taxa anual efetiva do ativo dado os indexadores atuais
+function effectiveAnnualRate(
+  indexer: string,
+  rate: number | null,
+  rates: { cdi?: number; selic?: number; ipca?: number },
+): number | null {
+  if (rate == null) return null;
+  switch (indexer) {
+    case "cdi": return rates.cdi != null ? (rates.cdi * rate) / 100 : null;
+    case "selic": return rates.selic != null ? (rates.selic * rate) / 100 : null;
+    case "ipca": return rates.ipca != null ? rates.ipca + rate : null;
+    case "prefixed": return rate;
+    default: return null;
+  }
+}
+
 function InvestmentsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [openAsset, setOpenAsset] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [assetForm, setAssetForm] = useState({
-    name: "", type: "fixed_income", indexer: "cdi", rate: "", institution: "", ticker: "", maturity_date: "",
+    name: "", type: "fixed_income", indexer: "cdi", rate: "", account_id: "", ticker: "", maturity_date: "",
   });
 
   const { data: assets = [] } = useQuery({
@@ -63,6 +79,49 @@ function InvestmentsPage() {
     },
     enabled: !!user,
   });
+
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts_for_invest", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("accounts").select("id,name,type,icon").eq("archived", false).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!user,
+  });
+
+  const { data: indexRates = [] } = useQuery({
+    queryKey: ["index_rates"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).from("index_rates").select("*");
+      if (error) throw error;
+      return (data || []) as Array<{ code: string; annual_rate: number; reference_date: string; updated_at: string; source: string | null }>;
+    },
+    refetchOnWindowFocus: false,
+  });
+
+  const ratesMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of indexRates) m[r.code] = Number(r.annual_rate);
+    return { cdi: m.cdi, selic: m.selic, ipca: m.ipca };
+  }, [indexRates]);
+
+  const lastRateUpdate = useMemo(() => {
+    if (!indexRates.length) return null;
+    return indexRates.map((r) => r.updated_at).sort().pop() || null;
+  }, [indexRates]);
+
+  const refreshRates = async () => {
+    toast.loading("Atualizando taxas...", { id: "rates" });
+    try {
+      const res = await fetch("/api/public/hooks/update-rates", { method: "POST" });
+      if (!res.ok) throw new Error();
+      toast.success("Taxas atualizadas", { id: "rates" });
+      qc.invalidateQueries({ queryKey: ["index_rates"] });
+    } catch {
+      toast.error("Falha ao atualizar taxas", { id: "rates" });
+    }
+  };
 
   const { data: allMov = [] } = useQuery({
     queryKey: ["all_movements", user?.id],
@@ -84,7 +143,6 @@ function InvestmentsPage() {
     enabled: !!user,
   });
 
-  // Computa posição atual e rentabilidade por ativo
   const positions = useMemo(() => {
     const map = new Map<string, { invested: number; withdrawn: number; income: number; lastSnap: number | null; lastSnapDate: string | null }>();
     for (const a of assets) map.set(a.id, { invested: 0, withdrawn: 0, income: 0, lastSnap: null, lastSnapDate: null });
@@ -117,6 +175,24 @@ function InvestmentsPage() {
     return { invested, current, profit: current - invested };
   }, [assets, positions]);
 
+  // Agrupa por instituição (account)
+  const byInstitution = useMemo(() => {
+    const groups = new Map<string, { name: string; icon?: string; assets: any[]; total: number }>();
+    for (const a of assets as any[]) {
+      const acc = accounts.find((x: any) => x.id === a.account_id);
+      const key = acc?.id || "_none";
+      const name = acc?.name || "Sem instituição";
+      const p = positions.get(a.id)!;
+      const net = p.invested - p.withdrawn;
+      const cur = p.lastSnap ?? (net + p.income);
+      const g = groups.get(key) || { name, icon: acc?.icon || undefined, assets: [] as any[], total: 0 };
+      g.assets.push(a);
+      g.total += cur;
+      groups.set(key, g);
+    }
+    return Array.from(groups.values()).sort((a, b) => b.total - a.total);
+  }, [assets, accounts, positions]);
+
   const createAsset = async () => {
     if (!user || !assetForm.name) return;
     const { error } = await supabase.from("investment_assets").insert({
@@ -125,14 +201,14 @@ function InvestmentsPage() {
       type: assetForm.type as any,
       indexer: assetForm.indexer as any,
       rate: assetForm.rate ? Number(assetForm.rate) : null,
-      institution: assetForm.institution || null,
+      account_id: assetForm.account_id || null,
       ticker: assetForm.ticker || null,
       maturity_date: assetForm.maturity_date || null,
-    });
+    } as any);
     if (error) return toast.error(error.message);
     toast.success("Ativo criado");
     setOpenAsset(false);
-    setAssetForm({ name: "", type: "fixed_income", indexer: "cdi", rate: "", institution: "", ticker: "", maturity_date: "" });
+    setAssetForm({ name: "", type: "fixed_income", indexer: "cdi", rate: "", account_id: "", ticker: "", maturity_date: "" });
     qc.invalidateQueries({ queryKey: ["assets"] });
   };
 
@@ -146,12 +222,12 @@ function InvestmentsPage() {
   if (selectedId) {
     const asset = assets.find((a: any) => a.id === selectedId);
     if (!asset) { setSelectedId(null); return null; }
-    return <AssetDetail asset={asset} onBack={() => setSelectedId(null)} onArchive={() => archiveAsset(asset.id)} position={positions.get(asset.id)!} />;
+    return <AssetDetail asset={asset} accounts={accounts} ratesMap={ratesMap} onBack={() => setSelectedId(null)} onArchive={() => archiveAsset(asset.id)} position={positions.get(asset.id)!} />;
   }
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-2 flex-wrap">
         <h1 className="font-display text-2xl md:text-3xl font-bold">Investimentos</h1>
         <Dialog open={openAsset} onOpenChange={setOpenAsset}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo ativo</Button></DialogTrigger>
@@ -159,6 +235,19 @@ function InvestmentsPage() {
             <DialogHeader><DialogTitle>Novo ativo</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div><Label>Nome</Label><Input value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} placeholder="Ex: CDB Nubank, ITSA4, Tesouro IPCA 2035" className="mt-1.5" /></div>
+              <div>
+                <Label>Instituição (conta)</Label>
+                <Select value={assetForm.account_id || "none"} onValueChange={(v) => setAssetForm({ ...assetForm, account_id: v === "none" ? "" : v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione uma conta" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhuma</SelectItem>
+                    {accounts.map((a: any) => (
+                      <SelectItem key={a.id} value={a.id}>{a.icon ? `${a.icon} ` : ""}{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">Vincula o ativo a uma instituição cadastrada. Não afeta o saldo da conta.</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Tipo</Label>
@@ -183,14 +272,27 @@ function InvestmentsPage() {
                 <div><Label>Taxa (%)</Label><Input type="number" step="0.01" value={assetForm.rate} onChange={(e) => setAssetForm({ ...assetForm, rate: e.target.value })} placeholder="Ex: 110" className="mt-1.5" /></div>
                 <div><Label>Vencimento</Label><Input type="date" value={assetForm.maturity_date} onChange={(e) => setAssetForm({ ...assetForm, maturity_date: e.target.value })} className="mt-1.5" /></div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Instituição</Label><Input value={assetForm.institution} onChange={(e) => setAssetForm({ ...assetForm, institution: e.target.value })} className="mt-1.5" /></div>
-                <div><Label>Ticker (opcional)</Label><Input value={assetForm.ticker} onChange={(e) => setAssetForm({ ...assetForm, ticker: e.target.value.toUpperCase() })} className="mt-1.5" /></div>
-              </div>
+              <div><Label>Ticker (opcional)</Label><Input value={assetForm.ticker} onChange={(e) => setAssetForm({ ...assetForm, ticker: e.target.value.toUpperCase() })} className="mt-1.5" /></div>
               <Button onClick={createAsset} className="w-full">Criar ativo</Button>
             </div>
           </DialogContent>
         </Dialog>
+      </div>
+
+      {/* Taxas atuais de mercado */}
+      <div className="rounded-2xl border border-border bg-surface-1 p-4 mb-6">
+        <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+          <div>
+            <div className="text-sm font-semibold">Taxas atuais</div>
+            {lastRateUpdate && <div className="text-xs text-muted-foreground">Atualizado em {formatDateBR(lastRateUpdate)}</div>}
+          </div>
+          <Button size="sm" variant="ghost" onClick={refreshRates}><RefreshCw className="h-3.5 w-3.5 mr-1.5" />Atualizar</Button>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <RateChip label="CDI" value={ratesMap.cdi} />
+          <RateChip label="SELIC" value={ratesMap.selic} />
+          <RateChip label="IPCA" value={ratesMap.ipca} />
+        </div>
       </div>
 
       {/* Resumo */}
@@ -205,46 +307,69 @@ function InvestmentsPage() {
         />
       </div>
 
-      {/* Lista de ativos */}
-      <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
-        {assets.length === 0 && (
-          <div className="p-10 text-center text-muted-foreground text-sm">
-            Nenhum ativo ainda. Cadastre o primeiro para começar a registrar aportes.
-          </div>
-        )}
-        <div className="divide-y divide-border">
-          {assets.map((a: any) => {
-            const p = positions.get(a.id)!;
-            const net = p.invested - p.withdrawn;
-            const cur = p.lastSnap ?? (net + p.income);
-            const profit = cur - net;
-            const profitPct = net > 0 ? (profit / net) * 100 : 0;
-            return (
-              <button key={a.id} onClick={() => setSelectedId(a.id)} className="w-full p-4 flex items-center gap-3 hover:bg-surface-2 transition-colors text-left">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">{a.name}</span>
-                    {a.ticker && <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">{a.ticker}</span>}
-                  </div>
-                  <div className="text-xs text-muted-foreground flex gap-2 flex-wrap mt-0.5">
-                    <span>{ASSET_TYPES[a.type]}</span>
-                    {a.indexer !== "none" && <><span>·</span><span>{a.rate ?? "—"} {INDEXERS[a.indexer]}</span></>}
-                    {a.institution && <><span>·</span><span>{a.institution}</span></>}
-                    {p.lastSnapDate && <><span>·</span><span>atualizado {formatDateBR(p.lastSnapDate)}</span></>}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono font-semibold tabular">{formatBRL(cur)}</div>
-                  <div className={cn("text-xs font-mono tabular", profit >= 0 ? "text-audit-green" : "text-audit-red")}>
-                    {profit >= 0 ? "+" : ""}{formatBRL(profit)} ({profitPct.toFixed(2)}%)
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-              </button>
-            );
-          })}
+      {/* Lista por instituição */}
+      {assets.length === 0 ? (
+        <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-muted-foreground text-sm">
+          Nenhum ativo ainda. Cadastre o primeiro para começar a registrar aportes.
         </div>
-      </div>
+      ) : (
+        <div className="space-y-4">
+          {byInstitution.map((g) => (
+            <div key={g.name} className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
+              <div className="px-4 py-2.5 flex items-center justify-between bg-surface-2/50 border-b border-border">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <span>{g.icon || "🏦"}</span>
+                  <span>{g.name}</span>
+                  <span className="text-xs text-muted-foreground">· {g.assets.length} ativo{g.assets.length > 1 ? "s" : ""}</span>
+                </div>
+                <span className="font-mono font-semibold text-sm tabular">{formatBRL(g.total)}</span>
+              </div>
+              <div className="divide-y divide-border">
+                {g.assets.map((a: any) => {
+                  const p = positions.get(a.id)!;
+                  const net = p.invested - p.withdrawn;
+                  const cur = p.lastSnap ?? (net + p.income);
+                  const profit = cur - net;
+                  const profitPct = net > 0 ? (profit / net) * 100 : 0;
+                  const eff = effectiveAnnualRate(a.indexer, a.rate, ratesMap);
+                  return (
+                    <button key={a.id} onClick={() => setSelectedId(a.id)} className="w-full p-4 flex items-center gap-3 hover:bg-surface-2 transition-colors text-left">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium truncate">{a.name}</span>
+                          {a.ticker && <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">{a.ticker}</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground flex gap-2 flex-wrap mt-0.5">
+                          <span>{ASSET_TYPES[a.type]}</span>
+                          {a.indexer !== "none" && <><span>·</span><span>{a.rate ?? "—"} {INDEXERS[a.indexer]}</span></>}
+                          {eff != null && <><span>·</span><span className="text-primary">≈ {eff.toFixed(2)}% a.a.</span></>}
+                          {p.lastSnapDate && <><span>·</span><span>atualizado {formatDateBR(p.lastSnapDate)}</span></>}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono font-semibold tabular">{formatBRL(cur)}</div>
+                        <div className={cn("text-xs font-mono tabular", profit >= 0 ? "text-audit-green" : "text-audit-red")}>
+                          {profit >= 0 ? "+" : ""}{formatBRL(profit)} ({profitPct.toFixed(2)}%)
+                        </div>
+                      </div>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RateChip({ label, value }: { label: string; value: number | undefined }) {
+  return (
+    <div className="rounded-xl bg-surface-2 px-3 py-2 text-center">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</div>
+      <div className="font-mono font-bold text-base tabular">{value != null ? `${value.toFixed(2)}%` : "—"}</div>
     </div>
   );
 }
@@ -258,7 +383,7 @@ function KpiCard({ label, value, accent, tone, icon }: { label: string; value: s
   );
 }
 
-function AssetDetail({ asset, onBack, onArchive, position }: { asset: any; onBack: () => void; onArchive: () => void; position: any }) {
+function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }: { asset: any; accounts: any[]; ratesMap: { cdi?: number; selic?: number; ipca?: number }; onBack: () => void; onArchive: () => void; position: any }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [openMov, setOpenMov] = useState(false);
@@ -288,6 +413,10 @@ function AssetDetail({ asset, onBack, onArchive, position }: { asset: any; onBac
   const cur = position.lastSnap ?? (net + position.income);
   const profit = cur - net;
   const profitPct = net > 0 ? (profit / net) * 100 : 0;
+  const account = accounts.find((a) => a.id === asset.account_id);
+  const eff = effectiveAnnualRate(asset.indexer, asset.rate, ratesMap);
+  // Projeção de rendimento mensal (taxa anual -> mensal composta)
+  const monthlyYield = eff != null ? cur * (Math.pow(1 + eff / 100, 1 / 12) - 1) : null;
 
   const addMov = async () => {
     if (!user || !movForm.amount) return;
@@ -334,19 +463,20 @@ function AssetDetail({ asset, onBack, onArchive, position }: { asset: any; onBac
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto">
       <Button variant="ghost" size="sm" onClick={onBack} className="mb-4"><ArrowLeft className="h-4 w-4 mr-2" />Voltar</Button>
 
       <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
         <div>
-          <h1 className="font-display text-3xl font-bold flex items-center gap-2">
+          <h1 className="font-display text-2xl md:text-3xl font-bold flex items-center gap-2 flex-wrap">
             {asset.name}
             {asset.ticker && <span className="text-sm px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono">{asset.ticker}</span>}
           </h1>
           <div className="text-sm text-muted-foreground mt-1 flex gap-2 flex-wrap">
             <span>{ASSET_TYPES[asset.type]}</span>
             {asset.indexer !== "none" && <><span>·</span><span>{asset.rate ?? "—"} {INDEXERS[asset.indexer]}</span></>}
-            {asset.institution && <><span>·</span><span>{asset.institution}</span></>}
+            {eff != null && <><span>·</span><span className="text-primary">≈ {eff.toFixed(2)}% a.a.</span></>}
+            {account && <><span>·</span><span>{account.icon ? `${account.icon} ` : ""}{account.name}</span></>}
             {asset.maturity_date && <><span>·</span><span>vence {formatDateBR(asset.maturity_date)}</span></>}
           </div>
         </div>
@@ -360,7 +490,24 @@ function AssetDetail({ asset, onBack, onArchive, position }: { asset: any; onBac
         <KpiCard label="Rentab." value={`${profitPct.toFixed(2)}%`} tone={profit >= 0 ? "green" : "red"} />
       </div>
 
-      <div className="flex gap-2 mb-4">
+      {monthlyYield != null && (
+        <div className="rounded-2xl border border-border bg-gradient-to-br from-surface-1 to-surface-2 p-4 mb-6">
+          <div className="text-xs text-muted-foreground">Rendimento estimado pela taxa atual</div>
+          <div className="flex gap-6 mt-1 flex-wrap">
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase">Mensal</div>
+              <div className="font-mono font-bold text-lg tabular text-audit-green">+{formatBRL(monthlyYield)}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase">Anual</div>
+              <div className="font-mono font-bold text-lg tabular text-audit-green">+{formatBRL(cur * (eff! / 100))}</div>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">Estimativa baseada em CDI/SELIC/IPCA atuais. Não considera IR.</p>
+        </div>
+      )}
+
+      <div className="flex gap-2 mb-4 flex-wrap">
         <Dialog open={openMov} onOpenChange={setOpenMov}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Movimentação</Button></DialogTrigger>
           <DialogContent>
