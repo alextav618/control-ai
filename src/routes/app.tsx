@@ -42,8 +42,8 @@ function AppLayout() {
       <aside className="hidden md:flex w-60 flex-col border-r border-border bg-sidebar shrink-0">
         <div className="p-5 border-b border-sidebar-border">
           <Link to="/app" className="flex items-center gap-2 font-display font-bold">
-            <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">L</span>
-            Ledger
+            <span className="h-8 w-8 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">I</span>
+            IControl IA
           </Link>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -101,8 +101,8 @@ function AppLayout() {
       <div className="md:hidden fixed top-0 inset-x-0 z-20 border-b border-border bg-background/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
           <Link to="/app" className="flex items-center gap-2 font-display font-bold text-sm">
-            <span className="h-7 w-7 rounded-md bg-gradient-primary flex items-center justify-center text-primary-foreground text-sm">L</span>
-            Ledger
+            <span className="h-7 w-7 rounded-md bg-gradient-primary flex items-center justify-center text-primary-foreground text-sm">I</span>
+            IControl IA
           </Link>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={toggle}>
