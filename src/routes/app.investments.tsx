@@ -178,14 +178,14 @@ function InvestmentsPage() {
   // Agrupa por instituição (account)
   const byInstitution = useMemo(() => {
     const groups = new Map<string, { name: string; icon?: string; assets: any[]; total: number }>();
-    for (const a of assets) {
+    for (const a of assets as any[]) {
       const acc = accounts.find((x: any) => x.id === a.account_id);
       const key = acc?.id || "_none";
       const name = acc?.name || "Sem instituição";
       const p = positions.get(a.id)!;
       const net = p.invested - p.withdrawn;
       const cur = p.lastSnap ?? (net + p.income);
-      const g = groups.get(key) || { name, icon: acc?.icon, assets: [], total: 0 };
+      const g = groups.get(key) || { name, icon: acc?.icon || undefined, assets: [] as any[], total: 0 };
       g.assets.push(a);
       g.total += cur;
       groups.set(key, g);
