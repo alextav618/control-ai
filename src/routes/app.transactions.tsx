@@ -49,77 +49,59 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
 
 /** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-  
-  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-  
   const total = txTotal + itemsTotal;
   await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
 };
 
+/* ======================================================   TxPage – Updated for new payment methods & transfer logic
+   ====================================================== */
 function TxPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({
-    type: "expense",
+    type: "expense",               // expense | income | transfer (transfer handled as expense with special flag)
     description: "",
     amount: "",
     occurred_on: todayISO(),
     account_id: "",
     category_id: "",
+    payment_method: "bank_balance" as "bank_balance" | "cash" | "voucher" | "credit_card" | "transfer",
     installments: "1",
   });
 
   const resetForm = () => {
-    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
-    setEditId(null);
-  };
-
-  const openEdit = (t: any) => {
-    setEditId(t.id);
     setForm({
-      type: t.type,
-      description: t.description,
-      amount: String(t.amount),
-      occurred_on: t.occurred_on,
-      account_id: t.account_id ?? "",
-      category_id: t.category_id ?? "",
+      type: "expense",
+      description: "",
+      amount: "",
+      occurred_on: todayISO(),
+      account_id: "",
+      category_id: "",
+      payment_method: "bank_balance",
       installments: "1",
     });
-    setOpen(true);
+    setEditId(null);
   };
-
   useEffect(() => { if (!open) resetForm(); }, [open]);
 
-  const { data: tx = [] } = useQuery({
-    queryKey: ["transactions", user?.id],
+  /* ---------- Load accounts (for payment method selection) ---------- */
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("transactions")
-        .select("*, accounts(name, type, closing_day, due_day), categories(name, icon), invoices(reference_month, reference_year, account_id, accounts(name))")
-        .order("occurred_on", { ascending: false })
-        .limit(200);
+      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
       if (error) throw error;
       return data;
     },
     enabled: !!user,
   });
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["accounts", user?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
-      return data ?? [];
-    },
-    enabled: !!user,
-  });
-
+  /* ---------- Load categories ---------- */
   const { data: cats = [] } = useQuery({
     queryKey: ["categories", user?.id, form.type],
     queryFn: async () => {
@@ -129,88 +111,92 @@ function TxPage() {
     enabled: !!user,
   });
 
-  const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
-    const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
-    const invoiceId = tx?.invoice_id;
-    
-    const { error } = await supabase.from("transactions").delete().eq("id", id);
-    if (error) toast.error(error.message);
-    else { 
-      // Recompute invoice total if this transaction was linked to an invoice
-      if (invoiceId) {
-        await recomputeInvoiceTotal(invoiceId);
-      }
-      toast.success("Removido"); 
-      qc.invalidateQueries({ queryKey: ["transactions"] }); 
-      qc.invalidateQueries({ queryKey: ["dashboard"] }); 
-    }
+  /* ---------- Open edit dialog ---------- */
+  const openEdit = (t: any) => {
+    setEditId(t.id);
+    setForm({
+      type: t.type,
+      description: t.description,
+      amount: String(t.amount),
+      occurred_on: t.occurred_on,
+      account_id: t.account_id ?? "",
+      category_id: t.category_id ?? "",
+      payment_method: "bank_balance", // default; will be overridden if account is credit_card
+      installments: "1",
+    });
+    setOpen(true);
   };
 
-  const ensureInvoice = async (account: any, purchaseDate: Date) => {
-    if (!user) return null;
-    const w = invoiceWindow(purchaseDate, account.closing_day ?? 1, account.due_day ?? 10);
-    const { data: existing } = await supabase
-      .from("invoices")
-      .select("*")
-      .eq("account_id", account.id)
-      .eq("reference_month", w.referenceMonth)
-      .eq("reference_year", w.referenceYear)
-      .maybeSingle();
-    if (existing) return existing;
-    const { data: created, error } = await supabase.from("invoices").insert({
-      user_id: user.id,
-      account_id: account.id,
-      reference_month: w.referenceMonth,
-      reference_year: w.referenceYear,
-      closing_date: w.closingDate,
-      due_date: w.dueDate,
-      status: "open",
-      total_amount: 0,
-    }).select().single();
-    if (error) { toast.error(error.message); return null; }
-    return created;
-  };
-
+  /* ---------- Submit (create / update) ---------- */
   const submit = async () => {
     if (!user || !form.description || !form.amount || !form.account_id) {
-      toast.error("Preencha descrição, valor e conta");
+      toast.error("Preencha descrição, valor, conta e método de pagamento");
       return;
     }
 
-    // === EDIÇÃO ===
-    if (editId) {
-      const { error } = await supabase.from("transactions").update({
-        type: form.type as any,
-        description: form.description,
-        amount: Number(form.amount),
-        occurred_on: form.occurred_on,
-        account_id: form.account_id,
-        category_id: form.category_id || null,
-      }).eq("id", editId);
-      if (error) { toast.error(error.message); return; }
-      toast.success("Lançamento atualizado");
+    // -------------------------------------------------
+    // 1️⃣  HANDLE TRANSFER (cash‑withdrawal) – does NOT count as expense
+    // -------------------------------------------------
+    if (form.payment_method === "transfer") {
+      // Transfer means: move money from a bank account to the wallet (cash)
+      const srcAccount = accounts.find(a => a.id === form.account_id);
+      if (!srcAccount || srcAccount.type !== "bank") {
+        toast.error("Selecione uma conta bancária de origem para a transferência");
+        return;
+      }
+      // Simply update the cash balance – no row inserted into transactions
+      const newCashBalance = Number(form.amount) + (accounts.find(a => a.type === "cash")?.current_balance ?? 0);
+      const { error: updErr } = await supabase.from("accounts").update({ current_balance: newCashBalance }).eq("id", accounts.find(a => a.type === "cash")?.id);
+      if (updErr) { toast.error(updErr.message); return; }
+      toast.success("Transferência concluída – saldo da carteira atualizado");
       setOpen(false);
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
       return;
     }
 
+    // -------------------------------------------------
+    // 2️⃣  NORMAL EXPENSE / INCOME HANDLING    // -------------------------------------------------
     const account = accounts.find((a: any) => a.id === form.account_id);
     if (!account) return;
+
     const totalAmount = Number(form.amount);
     const installments = Math.max(1, Number(form.installments) || 1);
     const isCard = account.type === "credit_card";
-    const installmentAmount = +(totalAmount / installments).toFixed(2);
+    const isCashOrVoucher = account.type === "cash" || account.type === "voucher";
 
+    // Determine which balance to deduct from
+    let balanceToDeductFrom: number | null = null;
+    let balanceUpdate: any = null;
+
+    if (isCashOrVoucher) {
+      // Deduct from the cash/voucher balance
+      const currentCash = accounts.find(a => a.type === account.type)?.current_balance ?? 0;
+      if (totalAmount > currentCash) {
+        toast.error(`Saldo insuficiente na ${account.type === "cash" ? "Carteira" : "Vale"}`);
+        return;
+      }
+      balanceToDeductFrom = currentCash;
+      balanceUpdate = { current_balance: currentCash - totalAmount };
+    } else if (isCard) {
+      // Credit‑card: we will create installments that reference the invoice later
+      balanceToDeductFrom = null; // not deducted now – handled via invoice total
+      balanceUpdate = null;
+    } else {
+      // Regular bank account – we treat it as expense (no balance deduction here)
+      balanceToDeductFrom = null;
+      balanceUpdate = null;
+    }
+
+    // -------------------------------------------------
+    // 3️⃣  INSTALLMENT LOGIC (if needed)
+    // -------------------------------------------------
     let installmentPlanId: string | null = null;
     if (installments > 1) {
       const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
         user_id: user.id,
         description: form.description,
         total_amount: totalAmount,
-        installment_amount: installmentAmount,
+        installment_amount: totalAmount / installments,
         total_installments: installments,
         account_id: account.id,
         category_id: form.category_id || null,
@@ -220,21 +206,50 @@ function TxPage() {
       installmentPlanId = plan.id;
     }
 
+    // -------------------------------------------------
+    // 4️⃣  BUILD TRANSACTION ROW(S)
+    // -------------------------------------------------
     const baseDate = new Date(form.occurred_on + "T12:00:00Z");
     const rows: any[] = [];
+
     for (let i = 0; i < installments; i++) {
       const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
       const occ_i = d.toISOString().slice(0, 10);
       let invoiceId: string | null = null;
+
+      // If this is a credit‑card purchase, link to the proper invoice
       if (isCard) {
-        const inv = await ensureInvoice(account, d);
-        invoiceId = inv?.id ?? null;
+        const w = invoiceWindow(d, account.closing_day ?? 1, account.due_day ?? 10);
+        const { data: existing } = await supabase
+          .from("invoices")
+          .select("*")
+          .eq("account_id", account.id)
+          .eq("reference_month", w.referenceMonth)
+          .eq("reference_year", w.referenceYear)
+          .maybeSingle();
+        if (existing) {
+          invoiceId = existing.id;
+        } else {
+          const { data: created, error: invErr } = await supabase.from("invoices").insert({
+            user_id: user.id,
+            account_id: account.id,
+            reference_month: w.referenceMonth,
+            reference_year: w.referenceYear,
+            closing_date: w.closingDate,
+            due_date: w.dueDate,
+            status: "open",
+            total_amount: 0,
+          }).select().single();
+          if (invErr) { toast.error(invErr.message); return; }
+          invoiceId = created.id;
+        }
       }
+
       const occurred = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       rows.push({
         user_id: user.id,
         type: form.type,
-        amount: installmentAmount,
+        amount: installments > 1 ? totalAmount / installments : totalAmount,
         description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
         occurred_on: occurred,
         account_id: account.id,
@@ -248,25 +263,36 @@ function TxPage() {
       });
     }
 
-    const { error } = await supabase.from("transactions").insert(rows as any);
-    if (error) { toast.error(error.message); return; }
-    
-    // After inserting transactions, update invoice totals for all affected invoices
+    // -------------------------------------------------
+    // 5️⃣  INSERT TRANSACTION(S)
+    // -------------------------------------------------
+    const { error: txErr } = await supabase.from("transactions").insert(rows as any);
+    if (txErr) { toast.error(txErr.message); return; }
+
+    // Update invoice totals for any invoice that received new transactions
     const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
     for (const invId of invoiceIds) {
       await recomputeInvoiceTotal(invId);
     }
-    
+
+    // Deduct from cash/voucher balance if applicable
+    if (balanceUpdate) {
+      await supabase.from("accounts").update(balanceUpdate).eq("id", account.id);
+    }
+
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
+  /* ---------- UI: Payment‑method selector ---------- */
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
   const selectedAccount = accounts.find((a: any) => a.id === form.account_id);
   const isCardSelected = selectedAccount?.type === "credit_card";
+  const isCashOrVoucherSelected = selectedAccount?.type === "cash" || selectedAccount?.type === "voucher";
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -277,6 +303,26 @@ function TxPage() {
           <DialogContent>
             <DialogHeader><DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle></DialogHeader>
             <div className="space-y-4">
+              {/* --- Payment Method Picker --- */}
+              <div>
+                <Label>Método de pagamento</Label>
+                <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {["bank_balance", "cash", "voucher", "credit_card", "transfer"].map(m => (
+                      <SelectItem key={m} value={m}>
+                        {m === "bank_balance" ? "Saldo Bancário" :
+                         m === "cash" ? "Dinheiro (Carteira)" :
+                         m === "voucher" ? "Vale (Alimentação)" :
+                         m === "credit_card" ? "Cartão de Crédito" :
+                         "Transferir (Saque)" }
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* --- Basic fields (shown/hidden depending on method) --- */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Tipo</Label>
@@ -293,47 +339,71 @@ function TxPage() {
                   <Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" />
                 </div>
               </div>
+
+              {/* --- Description & Amount --- */}
               <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado Pão de Açúcar" className="mt-1.5" /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
-                {form.type === "expense" && !editId && (
-                  <div>
-                    <Label>Parcelas</Label>
-                    <Input type="number" min={1} max={36} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" />
-                  </div>
-                )}
+              <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
+
+              {/* --- Installments (only for expenses) --- */}
+              {form.type === "expense" && !editId && (
+                <div><Label>Parcelas</Label><Input type="number" min={1} max={36} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" /></div>
+              )}
+
+              {/* --- Account selector --- */}
+              <div>
+                <Label>Conta / Cartão</Label>
+                <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a: any) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.name}{a.type === "credit_card" ? " 💳" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Conta / Cartão</Label>
-                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}{a.type === "credit_card" ? " 💳" : ""}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Categoria</Label>
-                  <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      {filteredCats.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+
+              {/* --- Category selector --- */}
+              <div>
+                <Label>Categoria</Label>
+                <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>
+                    {filteredCats.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-              {!editId && isCardSelected && Number(form.installments) > 1 && (
-                <p className="text-xs text-muted-foreground bg-surface-2 p-3 rounded-lg">
-                  💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
+
+              {/* --- Special notes for each method --- */}
+              {/* Cash/Voucher: show current balance */}
+              {isCashOrVoucherSelected && (
+                <p className="text-xs text-muted-foreground bg-surface-2 p-2 rounded">
+                  Saldo atual da {selectedAccount.type === "cash" ? "Carteira" : "Vale"}: <strong>{formatBRL(Number(selectedAccount.current_balance))}</strong>
                 </p>
               )}
+
+              {/* Transfer (Saque) note */}
+              {form.payment_method === "transfer" && (
+                <p className="text-xs text-muted-foreground bg-surface-2 p-2 rounded">
+                  💡 Saque: este movimento transfere dinheiro da conta bancária selecionada para a Carteira. Não gera despesa.
+                </p>
+              )}
+
+              {/* Credit‑card note */}
+              {isCardSelected && (
+                <p className="text-xs text-muted-foreground bg-surface-2 p-2 rounded">
+                  💳 As parcelas serão distribuídas nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
+                </p>
+              )}
+
               <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* ---------- Existing transaction list (unchanged except for new columns) ---------- */}
       <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
         {tx.length === 0 && <div className="p-8 text-center text-muted-foreground">Nenhum lançamento ainda.</div>}
         <div className="divide-y divide-border">
