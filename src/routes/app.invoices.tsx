@@ -17,6 +17,20 @@ export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
 });
 
+/** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
+const recomputeInvoiceTotal = async (invoiceId: string) => {
+  // Sum transactions linked to this invoice
+  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
+  
+  // Sum invoice items
+  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
+  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
+  
+  const total = txTotal + itemsTotal;
+  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
+};
+
 function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -120,10 +134,8 @@ function InvoicesPage() {
 
     if (error) { toast.error(error.message); return; }
 
-    // Recalcula total da fatura
-    const { data: items } = await supabase.from("invoice_items").select("*").eq("invoice_id", payInv.id);
-    const newTotal = (items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", payInv.id);
+    // Recompute invoice total after adding item
+    await recomputeInvoiceTotal(payInv.id);
 
     toast.success("Item adicionado");
     setItemDialog(false);
@@ -135,9 +147,8 @@ function InvoicesPage() {
     const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
     if (error) { toast.error(error.message); return; }
 
-    const { data: items } = await supabase.from("invoice_items").select("*").eq("invoice_id", invId);
-    const newTotal = (items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", invId);
+    // Recompute invoice total after removing item
+    await recomputeInvoiceTotal(invId);
 
     toast.success("Item removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -264,8 +275,7 @@ function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => 
     if (error) { toast.error(error.message); return; }
     const newItems = items.filter(i => i.id !== itemId);
     setItems(newItems);
-    const newTotal = newItems.reduce((s: number, i: any) => s + Number(i.amount), 0);
-    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", inv.id);
+    await recomputeInvoiceTotal(inv.id);
     toast.success("Item removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
