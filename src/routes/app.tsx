@@ -26,13 +26,13 @@ function AppLayout() {
 
   const nav = [
     { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { to: "/app/insights", label: "Insights", icon: Sparkles },
     { to: "/app/transactions", label: "Lançamentos", icon: Receipt },
-    { to: "/app/invoices", label: "Faturas", icon: CreditCard },
     { to: "/app/accounts", label: "Contas e Cartões", icon: Wallet },
-    { to: "/app/categories", label: "Categorias", icon: Tags },
+    { to: "/app/invoices", label: "Faturas", icon: CreditCard },
     { to: "/app/bills", label: "Recorrentes", icon: ListChecks },
     { to: "/app/investments", label: "Investimentos", icon: TrendingUp },
+    { to: "/app/categories", label: "Categorias", icon: Tags },
+    { to: "/app/insights", label: "Insights", icon: Sparkles },
   ];
 
   return (
