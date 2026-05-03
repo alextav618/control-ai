@@ -16,6 +16,7 @@ export const Route = createFileRoute("/app/dashboard")({
 
 function Dashboard() {
   const { user } = useAuth();
+  const [chatOpen, setChatOpen] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard", user?.id],
