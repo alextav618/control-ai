@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
-import { MessageSquare, LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard, Sparkles } from "lucide-react";
+import { LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -25,7 +25,6 @@ function AppLayout() {
   }
 
   const nav = [
-    { to: "/app", label: "Chat", icon: MessageSquare, exact: true },
     { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/app/insights", label: "Insights", icon: Sparkles },
     { to: "/app/transactions", label: "Lançamentos", icon: Receipt },
@@ -48,7 +47,7 @@ function AppLayout() {
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {nav.map((item) => {
-            const active = item.exact
+            const active = (item as any).exact
               ? location.pathname === item.to
               : location.pathname.startsWith(item.to);
             const Icon = item.icon;
@@ -115,7 +114,7 @@ function AppLayout() {
         </div>
         <div className="flex overflow-x-auto px-2 pb-2 gap-1 scrollbar-none">
           {nav.map((item) => {
-            const active = item.exact
+            const active = (item as any).exact
               ? location.pathname === item.to
               : location.pathname.startsWith(item.to);
             return (
