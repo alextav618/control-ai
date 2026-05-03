@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, X } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -151,9 +151,7 @@ function Dashboard() {
                 <div className="text-[10px] text-muted-foreground">Mande texto, foto ou áudio</div>
               </div>
             </div>
-            <button onClick={() => setChatOpen(false)} className="p-1.5 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground">
-              <X className="h-4 w-4" />
-            </button>
+            {/* Removed duplicate manual close button - default shadcn Dialog close button remains */}
           </div>
           <div className="flex-1 min-h-0">
             <ChatPanel autoFocus={chatOpen} />
