@@ -121,6 +121,43 @@ function Dashboard() {
         <p className="text-muted-foreground text-sm mt-1">{monthLabel}</p>
       </div>
 
+      {/* Chat trigger */}
+      <button
+        onClick={() => setChatOpen(true)}
+        className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-border bg-surface-1 hover:bg-surface-2 transition-colors text-left group"
+      >
+        <span className="h-9 w-9 rounded-xl bg-gradient-primary flex items-center justify-center text-primary-foreground shrink-0">
+          <Sparkles className="h-4 w-4" />
+        </span>
+        <span className="flex-1 text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+          Peça ao Assistente
+        </span>
+        <span className="text-xs text-muted-foreground hidden md:inline">IControl IA</span>
+      </button>
+
+      <Dialog open={chatOpen} onOpenChange={setChatOpen}>
+        <DialogContent className="max-w-3xl w-[95vw] h-[85vh] p-0 gap-0 flex flex-col overflow-hidden">
+          <DialogTitle className="sr-only">Chat IControl IA</DialogTitle>
+          <div className="flex items-center justify-between px-5 py-3 border-b border-border bg-surface-1/50">
+            <div className="flex items-center gap-2">
+              <span className="h-7 w-7 rounded-lg bg-gradient-primary flex items-center justify-center text-primary-foreground">
+                <Sparkles className="h-3.5 w-3.5" />
+              </span>
+              <div>
+                <div className="font-display font-semibold text-sm">IControl IA</div>
+                <div className="text-[10px] text-muted-foreground">Mande texto, foto ou áudio</div>
+              </div>
+            </div>
+            <button onClick={() => setChatOpen(false)} className="p-1.5 rounded-md hover:bg-surface-2 text-muted-foreground hover:text-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            <ChatPanel autoFocus={chatOpen} />
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <Kpi label="Saldo em conta" value={formatBRL(totalCashBalance)} icon={Wallet} />
