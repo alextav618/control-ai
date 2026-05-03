@@ -1,10 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-// BCB SGS series:
-// 4389 = CDI anualizado (% a.a.)
-// 1178 = SELIC anualizada (% a.a.)
-// 13522 = IPCA acumulado em 12 meses (%)
+type IndexRateRow = {
+  code: string;
+  annual_rate: number;
+  reference_date: string;
+  source: string;
+  updated_at: string;
+};
+
 const SERIES: Record<string, number> = {
   cdi: 4389,
   selic: 1178,
@@ -37,16 +41,15 @@ export const Route = createFileRoute("/api/public/hooks/update-rates")({
             results[code] = "fetch_failed";
             continue;
           }
-          const { error } = await supabaseAdmin.from("index_rates").upsert(
-            {
+          const { error } = await supabaseAdmin
+            .from<IndexRateRow>("index_rates")
+            .upsert({
               code,
               annual_rate: r.value,
               reference_date: r.date,
               source: "bcb",
               updated_at: new Date().toISOString(),
-            },
-            { onConflict: "code" },
-          );
+            }, { onConflict: "code" });
           results[code] = error ? `error: ${error.message}` : { rate: r.value, date: r.date };
         }
         return new Response(JSON.stringify({ ok: true, results }), {
@@ -54,7 +57,6 @@ export const Route = createFileRoute("/api/public/hooks/update-rates")({
         });
       },
       GET: async () => {
-        // permite trigger manual via browser
         const results: Record<string, unknown> = {};
         for (const [code, serie] of Object.entries(SERIES)) {
           const r = await fetchBcb(serie);
@@ -62,16 +64,15 @@ export const Route = createFileRoute("/api/public/hooks/update-rates")({
             results[code] = "fetch_failed";
             continue;
           }
-          await supabaseAdmin.from("index_rates").upsert(
-            {
+          await supabaseAdmin
+            .from<IndexRateRow>("index_rates")
+            .upsert({
               code,
               annual_rate: r.value,
               reference_date: r.date,
               source: "bcb",
               updated_at: new Date().toISOString(),
-            },
-            { onConflict: "code" },
-          );
+            }, { onConflict: "code" });
           results[code] = { rate: r.value, date: r.date };
         }
         return new Response(JSON.stringify({ ok: true, results }), {

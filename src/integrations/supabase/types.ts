@@ -1,30 +1,30 @@
-// Database type for Supabase client (minimal version to satisfy imports)
 export type Database = {
   public: {
-    Tables: Record<string, any>;
+    Tables: {
+      [key: string]: {
+        Row: Record<string, any>;
+        Insert: Record<string, any>;
+        Update: Record<string, any>;
+      };
+    };
     Enums: Record<string, any>;
     CompositeTypes: Record<string, any>;
   };
 };
 
-// Helper types referenced by Enums
-type DefaultSchema = Database['public'];
-type DatabaseWithoutInternals = Database;
-
-// Fixed Enums type using the defined helper types
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
+    | keyof Database['public']['Enums']
+    | { schema: keyof Database },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
-    schema: keyof DatabaseWithoutInternals
+    schema: keyof Database
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    ? keyof Database[DefaultSchemaEnumNameOrOptions['schema']]['Enums']
     : never = never,
 > = DefaultSchemaEnumNameOrOptions extends {
-  schema: keyof DatabaseWithoutInternals
+  schema: keyof Database
 }
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+  ? Database[DefaultSchemaEnumNameOrOptions['schema']]['Enums'][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof Database['public']['Enums']
+    ? Database['public']['Enums'][DefaultSchemaEnumNameOrOptions]
+    : never;
