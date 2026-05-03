@@ -1,0 +1,1 @@
+DELETE FROM public.installment_plans WHERE id NOT IN (SELECT DISTINCT installment_plan_id FROM public.transactions WHERE installment_plan_id IS NOT NULL);
