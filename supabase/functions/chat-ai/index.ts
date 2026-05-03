@@ -193,7 +193,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { text, imageBase64, audioBase64, audioMime, history } = body as {
       text?: string;
-      imageBase64?: string; // data URL ou base64 puro
+      imageBase64?: string;
       audioBase64?: string;
       audioMime?: string;
       history?: Array<{ role: "user" | "assistant"; content: string }>;
@@ -231,7 +231,6 @@ Deno.serve(async (req) => {
       userParts.push({ type: "image_url", image_url: { url } });
     }
     if (audioBase64) {
-      // Gemini accepts audio via input_audio
       userParts.push({
         type: "input_audio",
         input_audio: { data: audioBase64, format: (audioMime?.includes("wav") ? "wav" : "mp3") },
@@ -350,25 +349,21 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
     .from("invoices")
     .select("*")
     .eq("account_id", account.id)
-    .eq("reference_year", refYear)
     .eq("reference_month", refMonth)
+    .eq("reference_year", refYear)
     .maybeSingle();
 
   if (existing) return existing;
-
-  const { data: created, error } = await supabase
-    .from("invoices")
-    .insert({
-      user_id: userId,
-      account_id: account.id,
-      reference_month: refMonth,
-      reference_year: refYear,
-      closing_date: closingDate.toISOString().slice(0, 10),
-      due_date: dueDate.toISOString().slice(0, 10),
-      status: "open",
-    })
-    .select()
-    .single();
+  const { data: created, error } = await supabase.from("invoices").insert({
+    user_id: userId,
+    account_id: account.id,
+    reference_month: refMonth,
+    reference_year: refYear,
+    closing_date: closingDate.toISOString().slice(0, 10),
+    due_date: dueDate.toISOString().slice(0, 10),
+    status: "open",
+    total_amount: 0,
+  }).select().single();
   if (error) { console.error("invoice create error", error); return null; }
   return created;
 }
@@ -376,7 +371,7 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
 async function handleTransaction(supabase: any, userId: string, args: any, ctx: any) {
   const occurred = args.occurred_on || new Date().toISOString().slice(0, 10);
   const account = ctx.accounts.find((a: any) => a.id === args.account_id);
-  const isCard = account?.type === "credit_card" && args.type === "expense";
+  const isCard = account?.type === "credit_card";
 
   // Parcelamento → cria plano + N transações (uma por parcela), cada uma vinculada à fatura do mês correspondente
   const totalInst = Number(args.installment?.total_installments ?? 0);
@@ -447,7 +442,7 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     return { type: "transaction", transaction: txs?.[0], invoice: firstInvoice };
   }
 
-  // Transação simples
+  // Transação simples - CRITICAL FIX: Always link credit card transactions to invoices
   const invoice = isCard ? await ensureInvoice(supabase, userId, account, occurred) : null;
   const { data: tx, error: txErr } = await supabase
     .from("transactions")
@@ -460,7 +455,7 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       account_id: account?.id ?? null,
       category_id: args.category_id ?? null,
       fixed_bill_id: args.fixed_bill_id ?? null,
-      invoice_id: invoice?.id ?? null,
+      invoice_id: invoice?.id ?? null,  // This ensures credit card tx are linked to invoices
       audit_level: args.audit_level ?? null,
       audit_reason: args.audit_reason ?? null,
       source: "chat",
@@ -483,7 +478,21 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     data: args,
   });
 
+  // Recompute invoice total immediately after transaction
+  if (invoice?.id) {
+    await recomputeInvoiceTotal(supabase, invoice.id);
+  }
+
   return { type: "transaction", transaction: tx, invoice };
+}
+
+async function recomputeInvoiceTotal(supabase: any, invoiceId: string) {
+  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
+  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
+  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
+  const total = txTotal + itemsTotal;
+  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
 }
 
 async function handleEntity(supabase: any, userId: string, args: any) {
@@ -547,7 +556,6 @@ async function handleQuerySpending(supabase: any, _userId: string, args: any, ct
   const dateFrom = pf || args.date_from;
   const dateTo = pt || args.date_to;
 
-  // Resolver categoria por nome
   let categoryId: string | null = args.category_id ?? null;
   let categoryNameMatched: string | null = null;
   if (!categoryId && args.category_name) {
