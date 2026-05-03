@@ -47,7 +47,7 @@ function AppLayout() {
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {nav.map((item) => {
-            const active = item.exact
+            const active = (item as any).exact
               ? location.pathname === item.to
               : location.pathname.startsWith(item.to);
             const Icon = item.icon;
@@ -114,7 +114,7 @@ function AppLayout() {
         </div>
         <div className="flex overflow-x-auto px-2 pb-2 gap-1 scrollbar-none">
           {nav.map((item) => {
-            const active = item.exact
+            const active = (item as any).exact
               ? location.pathname === item.to
               : location.pathname.startsWith(item.to);
             return (
