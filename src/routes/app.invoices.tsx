@@ -19,11 +19,9 @@ export const Route = createFileRoute("/app/invoices")({
 
 /** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
-  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
   
@@ -134,7 +132,6 @@ function InvoicesPage() {
 
     if (error) { toast.error(error.message); return; }
 
-    // Recompute invoice total after adding item
     await recomputeInvoiceTotal(payInv.id);
 
     toast.success("Item adicionado");
@@ -147,7 +144,6 @@ function InvoicesPage() {
     const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
     if (error) { toast.error(error.message); return; }
 
-    // Recompute invoice total after removing item
     await recomputeInvoiceTotal(invId);
 
     toast.success("Item removido");
@@ -259,15 +255,22 @@ function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => 
 
   const loadItems = async () => {
     setLoadingItems(true);
-    const { data } = await qc.fetchQuery({
-      queryKey: ["invoice_items", inv.id],
-      queryFn: async () => {
-        const { data } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
-        return data || [];
-      },
-    });
-    setItems(data || []);
-    setLoadingItems(false);
+    try {
+      // FIX: fetchQuery returns the data directly, not { data }
+      const data = await qc.fetchQuery({
+        queryKey: ["invoice_items", inv.id],
+        queryFn: async () => {
+          const { data: itemsData } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
+          return itemsData || [];
+        },
+      });
+      setItems(data || []);
+    } catch (error) {
+      console.error("Error loading invoice items:", error);
+      setItems([]);
+    } finally {
+      setLoadingItems(false);
+    }
   };
 
   const removeItem = async (itemId: string) => {
