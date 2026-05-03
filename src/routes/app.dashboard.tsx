@@ -33,7 +33,7 @@ function Dashboard() {
         supabase.from("invoices").select("*, accounts!inner(name, archived)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
-        supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle(),
+        supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(), // Fixed type error
         supabase.from("invoice_items").select("*"),
       ]);
       return {

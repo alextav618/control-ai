@@ -147,17 +147,17 @@ function InvestmentsPage() {
     const map = new Map<string, { invested: number; withdrawn: number; income: number; lastSnap: number | null; lastSnapDate: string | null }>();
     for (const a of assets) map.set(a.id, { invested: 0, withdrawn: 0, income: 0, lastSnap: null, lastSnapDate: null });
     for (const m of allMov) {
-      const p = map.get(m.asset_id); if (!p) continue;
-      const amt = Number(m.amount);
+      const p = map.get(m.asset_id as string); if (!p) continue;
+      const amt = Number(m.amount as number);
       if (m.type === "deposit") p.invested += amt;
       else if (m.type === "withdrawal") p.withdrawn += amt;
       else if (m.type === "interest" || m.type === "dividend") p.income += amt;
       else if (m.type === "fee" || m.type === "tax") p.income -= amt;
     }
     for (const s of allSnaps) {
-      const p = map.get(s.asset_id); if (!p) continue;
+      const p = map.get(s.asset_id as string); if (!p) continue;
       if (!p.lastSnap || (p.lastSnapDate && s.snapshot_date > p.lastSnapDate)) {
-        p.lastSnap = Number(s.market_value);
+        p.lastSnap = Number(s.market_value as number);
         p.lastSnapDate = s.snapshot_date;
       }
     }
@@ -166,7 +166,7 @@ function InvestmentsPage() {
 
   const totals = useMemo(() => {
     let invested = 0, current = 0;
-    for (const a of assets) {
+    for (const a of assets as any[]) {
       const p = positions.get(a.id)!;
       const net = p.invested - p.withdrawn;
       invested += net;

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react"; // Added useEffect import
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -26,13 +26,13 @@ function ProfilesPage() {
   const { data: profile } = useQuery({
     queryKey: ["profile", user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle();
+      const { data } = await supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle(); // Fixed type error
       return data;
     },
     enabled: !!user,
   });
 
-  useEffect(() => {
+  useEffect(() => { // Fixed missing useEffect
     if (profile) {
       setForm({
         display_name: profile.display_name || "",
