@@ -23,14 +23,10 @@ function todayISO() {
 }
 
 /** Calcula a fatura (mês/ano de referência, datas de fechamento e vencimento) para uma compra no cartão. */
-function invoiceWindowForDate(purchase: Date, closingDay: number, dueDay: number): {
-  referenceMonth: number;
-  referenceYear: number;
-  closingDate: string;
-  dueDate: string;
-} {
+function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   const day = purchase.getDate();
-  let m = purchase.getMonth() + 1; // 1..12  let y = purchase.getFullYear();
+  let m = purchase.getMonth() + 1; // 1..12
+  let y = purchase.getFullYear();
   // Se compra é após o fechamento, vai pra próxima fatura
   if (day > closingDay) {
     m += 1;
@@ -39,7 +35,8 @@ function invoiceWindowForDate(purchase: Date, closingDay: number, dueDay: number
   const safeClosing = Math.min(closingDay, 28);
   const safeDue = Math.min(dueDay, 28);
   const closingDate = new Date(y, m - 1, safeClosing);
-  // Vencimento: se due_day < closing_day, costuma ser no mês seguinte  let dueY = y, dueM = m;
+  // Vencimento: se due_day < closing_day, costuma ser no mês seguinte
+  let dueY = y, dueM = m;
   if (dueDay <= closingDay) { dueM += 1; if (dueM > 12) { dueM = 1; dueY += 1; } }
   const dueDate = new Date(dueY, dueM - 1, safeDue);
   return {
@@ -48,50 +45,6 @@ function invoiceWindowForDate(purchase: Date, closingDay: number, dueDay: number
     closingDate: `${closingDate.getFullYear()}-${String(closingDate.getMonth() + 1).padStart(2, "0")}-${String(closingDate.getDate()).padStart(2, "0")}`,
     dueDate: `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, "0")}-${String(dueDate.getDate()).padStart(2, "0")}`,
   };
-}
-
-/** Cria ou reutiliza uma fatura para uma data específica */
-async function ensureInvoiceForDate(
-  supabase: any,
-  userId: string,
-  account: any,
-  specificDate: Date
-): Promise<{ id: string } | null> {
-  if (!userId) return null;
-  const { referenceMonth, referenceYear, closingDate, dueDate } = invoiceWindowForDate(
-    specificDate,
-    account.closing_day ?? 1,
-    account.due_day ?? 10  );
-
-  const { data: existing } = await supabase
-    .from("invoices")
-    .select("*")
-    .eq("account_id", account.id)
-    .eq("reference_month", referenceMonth)
-    .eq("reference_year", referenceYear)
-    .maybeSingle();
-
-  if (existing) return { id: existing.id };
-
-  const { data: created, error } = await supabase
-    .from("invoices")
-    .insert({
-      user_id: userId,
-      account_id: account.id,
-      reference_month: referenceMonth,
-      reference_year: referenceYear,
-      closing_date: closingDate,
-      due_date: dueDate,
-      status: "open",
-    })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("Invoice creation error:", error);
-    return null;
-  }
-  return { id: created.id };
 }
 
 function TxPage() {
@@ -168,6 +121,30 @@ function TxPage() {
     else { toast.success("Removido"); qc.invalidateQueries({ queryKey: ["transactions"] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); }
   };
 
+  const ensureInvoice = async (account: any, purchaseDate: Date) => {
+    if (!user) return null;
+    const w = invoiceWindow(purchaseDate, account.closing_day ?? 1, account.due_day ?? 10);
+    const { data: existing } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("account_id", account.id)
+      .eq("reference_month", w.referenceMonth)
+      .eq("reference_year", w.referenceYear)
+      .maybeSingle();
+    if (existing) return existing;
+    const { data: created, error } = await supabase.from("invoices").insert({
+      user_id: user.id,
+      account_id: account.id,
+      reference_month: w.referenceMonth,
+      reference_year: w.referenceYear,
+      closing_date: w.closingDate,
+      due_date: w.dueDate,
+      status: "open",
+    }).select().single();
+    if (error) { toast.error(error.message); return null; }
+    return created;
+  };
+
   const submit = async () => {
     if (!user || !form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
@@ -218,16 +195,13 @@ function TxPage() {
 
     const baseDate = new Date(form.occurred_on + "T12:00:00Z");
     const rows = [];
-    const createdInvoiceIds: string[] = [];
-
     for (let i = 0; i < installments; i++) {
       const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
       const occ_i = d.toISOString().slice(0, 10);
       let invoiceId: string | null = null;
       if (isCard) {
-        const inv = await ensureInvoiceForDate(supabase, user.id, account, d);
+        const inv = await ensureInvoice(account, d);
         invoiceId = inv?.id ?? null;
-        if (inv.id && !createdInvoiceIds.includes(inv.id)) createdInvoiceIds.push(inv.id);
       }
       const occurred = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       rows.push({
@@ -254,8 +228,6 @@ function TxPage() {
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
-    // Invalidate invoices query so the new open invoices appear in "Faturas em aberto"
-    qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
@@ -310,7 +282,7 @@ function TxPage() {
                 <div>
                   <Label>Categoria</Label>
                   <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectValue>
+                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
                     <SelectContent>
                       {filteredCats.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
                     </SelectContent>
