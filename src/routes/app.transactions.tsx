@@ -49,11 +49,9 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
 
 /** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
-  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
   
@@ -130,14 +128,12 @@ function TxPage() {
   });
 
   const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
     const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
     const invoiceId = tx?.invoice_id;
     
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) toast.error(error.message);
     else { 
-      // Recompute invoice total if this transaction was linked to an invoice
       if (invoiceId) {
         await recomputeInvoiceTotal(invoiceId);
       }
@@ -178,7 +174,6 @@ function TxPage() {
       return;
     }
 
-    // === EDIÇÃO ===
     if (editId) {
       const { error } = await supabase.from("transactions").update({
         type: form.type as any,
@@ -251,7 +246,6 @@ function TxPage() {
     const { error } = await supabase.from("transactions").insert(rows as any);
     if (error) { toast.error(error.message); return; }
     
-    // After inserting transactions, update invoice totals for all affected invoices
     const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
     for (const invId of invoiceIds) {
       await recomputeInvoiceTotal(invId);
@@ -267,6 +261,12 @@ function TxPage() {
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
   const selectedAccount = accounts.find((a: any) => a.id === form.account_id);
   const isCardSelected = selectedAccount?.type === "credit_card";
+
+  // Group accounts by type for payment method selection
+  const bankAccounts = accounts.filter(a => a.type === "checking" || a.type === "savings");
+  const cashAccounts = accounts.filter(a => a.type === "cash");
+  const voucherAccounts = accounts.filter(a => a.type === "voucher");
+  const creditCardAccounts = accounts.filter(a => a.type === "credit_card");
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -294,6 +294,79 @@ function TxPage() {
                 </div>
               </div>
               <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado Pão de Açúcar" className="mt-1.5" /></div>
+              
+              {/* Payment Method Selection */}
+              <div className="space-y-3">
+                <Label>Método de Pagamento</Label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {/* Bank Accounts */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Instituições Bancárias</div>
+                    <Select value={bankAccounts.some(a => a.id === form.account_id) ? form.account_id : ""} 
+                            onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Selecione conta" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bankAccounts.map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  {/* Cash */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Dinheiro (Carteira)</div>
+                    <Select value={cashAccounts.some(a => a.id === form.account_id) ? form.account_id : ""} 
+                            onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Selecione carteira" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {cashAccounts.map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  {/* Vouchers */}
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Vale Alimentação/Refeição</div>
+                    <Select value={voucherAccounts.some(a => a.id === form.account_id) ? form.account_id : ""} 
+                            onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Selecione vale" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {voucherAccounts.map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                
+                {/* Credit Cards */}
+                {creditCardAccounts.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium text-muted-foreground">Cartões de Crédito</div>
+                    <Select value={creditCardAccounts.some(a => a.id === form.account_id) ? form.account_id : ""} 
+                            onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="Selecione cartão" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {creditCardAccounts.map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
                 {form.type === "expense" && !editId && (
