@@ -26,7 +26,7 @@ const recomputeInvoiceTotal = async (invoiceId: string) => {
   // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-    
+  
   const total = txTotal + itemsTotal;
   await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
 };
@@ -259,15 +259,14 @@ function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => 
 
   const loadItems = async () => {
     setLoadingItems(true);
-    // Fix: Use supabase query directly instead of qc.fetchQuery
-    const { data, error } = await supabase
-      .from("invoice_items")
-      .select("*")
-      .eq("invoice_id", inv.id);
-    
-    if (!error && data) {
-      setItems(data);
-    }
+    const { data } = await qc.fetchQuery({
+      queryKey: ["invoice_items", inv.id],
+      queryFn: async () => {
+        const { data } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
+        return data || [];
+      },
+    });
+    setItems(data || []);
     setLoadingItems(false);
   };
 

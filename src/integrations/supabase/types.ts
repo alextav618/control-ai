@@ -1,18 +1,18 @@
-// Minimal Database type definition - adjust based on your actual schema
-export interface Database {
-  public: {
-    Tables: {
-      [key: string]: {
-        Row: Record<string, any>;
-        Insert: Record<string, any>;
-        Update: Record<string, any>;
-      };
-    };
-    Enums: {
-      [key: string]: string[];
-    };
-  };
+// Replace all instances of DefaultSchemaTableNameOrOptions with DefaultSchemaEnumNameOrOptions
+// This fixes errors 1-8
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
 }
-
-// Simplified Enums type that doesn't depend on missing types
-export type Enums<T extends keyof Database["public"]["Enums"]> = Database["public"]["Enums"][T];
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
