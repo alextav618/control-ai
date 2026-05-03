@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
-import { LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard, Sparkles } from "lucide-react";
+import { LayoutDashboard, Wallet, Receipt, LogOut, ListChecks, Tags, TrendingUp, Sun, Moon, CreditCard, Sparkles, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app")({
@@ -33,6 +33,7 @@ function AppLayout() {
     { to: "/app/investments", label: "Investimentos", icon: TrendingUp },
     { to: "/app/categories", label: "Categorias", icon: Tags },
     { to: "/app/insights", label: "Insights", icon: Sparkles },
+    { to: "/app/profiles", label: "Perfil", icon: User },
   ];
 
   return (

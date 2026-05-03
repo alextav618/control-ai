@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppTransactionsRouteImport } from './routes/app.transactions'
+import { Route as AppProfilesRouteImport } from './routes/app.profiles'
 import { Route as AppInvoicesRouteImport } from './routes/app.invoices'
 import { Route as AppInvestmentsRouteImport } from './routes/app.investments'
 import { Route as AppInsightsRouteImport } from './routes/app.insights'
@@ -46,6 +47,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppTransactionsRoute = AppTransactionsRouteImport.update({
   id: '/transactions',
   path: '/transactions',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppProfilesRoute = AppProfilesRouteImport.update({
+  id: '/profiles',
+  path: '/profiles',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInvoicesRoute = AppInvoicesRouteImport.update({
@@ -101,6 +107,7 @@ export interface FileRoutesByFullPath {
   '/app/insights': typeof AppInsightsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
+  '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -115,6 +122,7 @@ export interface FileRoutesByTo {
   '/app/insights': typeof AppInsightsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
+  '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -131,6 +139,7 @@ export interface FileRoutesById {
   '/app/insights': typeof AppInsightsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
+  '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -148,6 +157,7 @@ export interface FileRouteTypes {
     | '/app/insights'
     | '/app/investments'
     | '/app/invoices'
+    | '/app/profiles'
     | '/app/transactions'
     | '/app/'
     | '/api/public/hooks/update-rates'
@@ -162,6 +172,7 @@ export interface FileRouteTypes {
     | '/app/insights'
     | '/app/investments'
     | '/app/invoices'
+    | '/app/profiles'
     | '/app/transactions'
     | '/app'
     | '/api/public/hooks/update-rates'
@@ -177,6 +188,7 @@ export interface FileRouteTypes {
     | '/app/insights'
     | '/app/investments'
     | '/app/invoices'
+    | '/app/profiles'
     | '/app/transactions'
     | '/app/'
     | '/api/public/hooks/update-rates'
@@ -224,6 +236,13 @@ declare module '@tanstack/react-router' {
       path: '/transactions'
       fullPath: '/app/transactions'
       preLoaderRoute: typeof AppTransactionsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/profiles': {
+      id: '/app/profiles'
+      path: '/profiles'
+      fullPath: '/app/profiles'
+      preLoaderRoute: typeof AppProfilesRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/invoices': {
@@ -293,6 +312,7 @@ interface AppRouteChildren {
   AppInsightsRoute: typeof AppInsightsRoute
   AppInvestmentsRoute: typeof AppInvestmentsRoute
   AppInvoicesRoute: typeof AppInvoicesRoute
+  AppProfilesRoute: typeof AppProfilesRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -305,6 +325,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppInsightsRoute: AppInsightsRoute,
   AppInvestmentsRoute: AppInvestmentsRoute,
   AppInvoicesRoute: AppInvoicesRoute,
+  AppProfilesRoute: AppProfilesRoute,
   AppTransactionsRoute: AppTransactionsRoute,
   AppIndexRoute: AppIndexRoute,
 }

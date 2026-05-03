@@ -88,7 +88,7 @@ function TxPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("transactions")
-        .select("*, accounts(name, type, closing_day, due_day), categories(name, icon)")
+        .select("*, accounts(name, type, closing_day, due_day), categories(name, icon), invoices(reference_month, reference_year, account_id, accounts(name))")
         .order("occurred_on", { ascending: false })
         .limit(200);
       if (error) throw error;
@@ -193,11 +193,11 @@ function TxPage() {
       installmentPlanId = plan.id;
     }
 
-    const baseDate = new Date(form.occurred_on + "T12:00:00");
+    const baseDate = new Date(form.occurred_on + "T12:00:00Z");
     const rows = [];
     for (let i = 0; i < installments; i++) {
-      const d = new Date(baseDate);
-      d.setMonth(d.getMonth() + i);
+      const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
+      const occ_i = d.toISOString().slice(0, 10);
       let invoiceId: string | null = null;
       if (isCard) {
         const inv = await ensureInvoice(account, d);
@@ -212,6 +212,7 @@ function TxPage() {
         occurred_on: occurred,
         account_id: account.id,
         category_id: form.category_id || null,
+        fixed_bill_id: null,
         installment_plan_id: installmentPlanId,
         installment_number: installments > 1 ? i + 1 : null,
         invoice_id: invoiceId,
@@ -316,7 +317,7 @@ function TxPage() {
                     {t.installment_number && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-surface-3 text-muted-foreground">parcela {t.installment_number}</span>
                     )}
-                    {t.invoice_id && (
+                    {t.invoices && (
                       <span className="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary">fatura</span>
                     )}
                   </div>
@@ -324,6 +325,7 @@ function TxPage() {
                     <span>{formatDateBR(t.occurred_on)}</span>
                     {t.accounts && <span>· {t.accounts.name}</span>}
                     {t.categories && <span>· {t.categories.icon} {t.categories.name}</span>}
+                    {t.invoices && t.invoices.accounts && <span>· {t.invoices.accounts.name}</span>}
                   </div>
                   {t.audit_reason && <div className="text-xs text-muted-foreground/80 mt-1 italic">{t.audit_reason}</div>}
                 </div>

@@ -318,135 +318,43 @@ export type Database = {
           },
         ]
       }
-      investment_assets: {
-        Row: {
-          account_id: string | null
-          archived: boolean
-          created_at: string
-          id: string
-          indexer: Database["public"]["Enums"]["asset_indexer"]
-          institution: string | null
-          maturity_date: string | null
-          name: string
-          notes: string | null
-          rate: number | null
-          ticker: string | null
-          type: Database["public"]["Enums"]["asset_type"]
-          updated_at: string
-          user_id: string
-        }
-        Insert: {
-          account_id?: string | null
-          archived?: boolean
-          created_at?: string
-          id?: string
-          indexer?: Database["public"]["Enums"]["asset_indexer"]
-          institution?: string | null
-          maturity_date?: string | null
-          name: string
-          notes?: string | null
-          rate?: number | null
-          ticker?: string | null
-          type?: Database["public"]["Enums"]["asset_type"]
-          updated_at?: string
-          user_id: string
-        }
-        Update: {
-          account_id?: string | null
-          archived?: boolean
-          created_at?: string
-          id?: string
-          indexer?: Database["public"]["Enums"]["asset_indexer"]
-          institution?: string | null
-          maturity_date?: string | null
-          name?: string
-          notes?: string | null
-          rate?: number | null
-          ticker?: string | null
-          type?: Database["public"]["Enums"]["asset_type"]
-          updated_at?: string
-          user_id?: string
-        }
-        Relationships: []
-      }
-      investment_movements: {
+      invoice_items: {
         Row: {
           amount: number
-          asset_id: string
           created_at: string
+          description: string
           id: string
-          notes: string | null
-          occurred_on: string
-          quantity: number | null
-          type: Database["public"]["Enums"]["movement_type"]
-          unit_price: number | null
+          invoice_id: string
+          quantity: number
+          unit_price: number
           user_id: string
         }
         Insert: {
           amount: number
-          asset_id: string
           created_at?: string
+          description: string
           id?: string
-          notes?: string | null
-          occurred_on?: string
-          quantity?: number | null
-          type: Database["public"]["Enums"]["movement_type"]
-          unit_price?: number | null
+          invoice_id: string
+          quantity: number
+          unit_price: number
           user_id: string
         }
         Update: {
           amount?: number
-          asset_id?: string
           created_at?: string
+          description?: string
           id?: string
-          notes?: string | null
-          occurred_on?: string
-          quantity?: number | null
-          type?: Database["public"]["Enums"]["movement_type"]
-          unit_price?: number | null
+          invoice_id?: string
+          quantity?: number
+          unit_price?: number
           user_id?: string
         }
         Relationships: [
           {
-            foreignKeyName: "investment_movements_asset_id_fkey"
-            columns: ["asset_id"]
+            foreignKeyName: "invoice_items_invoice_id_fkey"
+            columns: ["invoice_id"]
             isOneToOne: false
-            referencedRelation: "investment_assets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      investment_snapshots: {
-        Row: {
-          asset_id: string
-          created_at: string
-          id: string
-          market_value: number
-          snapshot_date: string
-          user_id: string
-        }
-        Insert: {
-          asset_id: string
-          created_at?: string
-          id?: string
-          market_value: number
-          snapshot_date?: string
-          user_id: string
-        }
-        Update: {
-          asset_id?: string
-          created_at?: string
-          id?: string
-          market_value?: number
-          snapshot_date?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "investment_snapshots_asset_id_fkey"
-            columns: ["asset_id"]
-            isOneToOne: false
-            referencedRelation: "investment_assets"
+            referencedRelation: "invoices"
             referencedColumns: ["id"]
           },
         ]
@@ -817,14 +725,14 @@ export type Enums<
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
-    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Enums"]
     : never = never,
-> = DefaultSchemaEnumNameOrOptions extends {
+> = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
-  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
-  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaTableNameOrOptions]
     : never
 
 export type CompositeTypes<

@@ -34,13 +34,14 @@ function InsightsPage() {
       const lastMonthDate = new Date(y, now.getMonth() - 1, 1);
       const lmStart = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, "0")}-01`;
 
-      const [txR, lmR, billsR, invR, profR, accR] = await Promise.all([
+      const [txR, lmR, billsR, invR, profR, accR, itemsR] = await Promise.all([
         supabase.from("transactions").select("*, categories(name, icon)").gte("occurred_on", monthStart),
         supabase.from("transactions").select("amount, type, category_id, occurred_on, categories(name)").gte("occurred_on", lmStart).lt("occurred_on", monthStart),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("invoices").select("*, accounts!inner(name, archived)").eq("accounts.archived", false).in("status", ["open", "closed"]),
         supabase.from("profiles").select("*").maybeSingle(),
         supabase.from("accounts").select("*").eq("archived", false),
+        supabase.from("invoice_items").select("*"),
       ]);
       return {
         tx: txR.data ?? [],
@@ -49,6 +50,7 @@ function InsightsPage() {
         invoices: invR.data ?? [],
         profile: profR.data,
         accounts: accR.data ?? [],
+        invoiceItems: itemsR.data ?? [],
       };
     },
     enabled: !!user,
@@ -117,7 +119,17 @@ function InsightsPage() {
       });
     }
 
-    // Sem categoria
+    // Itens de fatura sem categorização
+    const itemsWithoutCategory = (data.invoiceItems as any[]).filter(i => !i.category_id).length;
+    if (itemsWithoutCategory >= 3) {
+      out.push({
+        level: "tip",
+        title: `${itemsWithoutCategory} itens de fatura sem categoria`,
+        body: "Categorizar itens de fatura melhora a precisão dos relatórios e da auditoria da IA. Edite os itens na aba Faturas.",
+      });
+    }
+
+    // Sem categoria em transações
     const noCat = tx.filter((t: any) => t.type === "expense" && !t.category_id).length;
     if (noCat >= 3) {
       out.push({
@@ -146,6 +158,16 @@ function InsightsPage() {
       });
     }
 
+    // Total de itens em faturas
+    const totalItemsValue = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);
+    if (totalItemsValue > 0 && totalItemsValue > expense * 0.3) {
+      out.push({
+        level: "warning",
+        title: "Itens de fatura representam grande parte dos gastos",
+        body: `Itens de fatura somam ${formatBRL(totalItemsValue)} (${((totalItemsValue / expense) * 100).toFixed(0)}% dos gastos). Considere revisar compras parceladas.`,
+      });
+    }
+
     // Tudo zen
     if (out.length === 0) {
       out.push({
@@ -171,7 +193,8 @@ function InsightsPage() {
       const tx = data.tx as any[];
       const expense = tx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
       const income = tx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-      const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
+      const itemsTotal = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);
+      const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Itens de fatura: ${formatBRL(itemsTotal)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
       const { data: resp, error } = await supabase.functions.invoke("chat-ai", {
         body: { text: `Faça uma análise financeira pessoal curta (máx 6 linhas) e direta sobre meu mês: ${summary} Não registre nada, apenas avalie e dê 1 dica prática.`, history: [] },
       });

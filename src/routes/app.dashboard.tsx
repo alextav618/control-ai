@@ -25,15 +25,16 @@ function Dashboard() {
       const month = now.getMonth() + 1;
       const year = now.getFullYear();
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-      // Para projeção: pegar parcelas futuras (próximos 90 dias)
       const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
-      const [accR, txR, futureTxR, openInvR, billsR, occR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(type, name)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
         supabase.from("invoices").select("*, accounts!inner(name, archived)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
+        supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle(),
+        supabase.from("invoice_items").select("*"),
       ]);
       return {
         accounts: accR.data ?? [],
@@ -42,6 +43,8 @@ function Dashboard() {
         openInvoices: openInvR.data ?? [],
         bills: billsR.data ?? [],
         occs: occR.data ?? [],
+        profile: profileR.data,
+        invoiceItems: invoiceItemsR.data ?? [],
       };
     },
     enabled: !!user,
@@ -71,6 +74,9 @@ function Dashboard() {
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
+  // Invoice items total
+  const invoiceItemsTotal = (data?.invoiceItems ?? []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+
   // === PROJEÇÃO 3 MESES ===
   const projection = useMemo(() => {
     if (!data) return [];
@@ -80,16 +86,13 @@ function Dashboard() {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const m = d.getMonth() + 1;
       const y = d.getFullYear();
-      // Recorrentes do mês (todas as ativas)
       const recurring = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
-      // Parcelas futuras que caem nesse mês (a partir das transactions com installment_plan_id)
       const installments = (data.futureTx as any[])
         .filter((t) => {
           const td = new Date(t.occurred_on);
           return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
         })
         .reduce((s, t) => s + Number(t.amount), 0);
-      // Faturas em aberto que vencem nesse mês
       const invoices = (data.openInvoices as any[])
         .filter((inv) => {
           const dd = new Date(inv.due_date);

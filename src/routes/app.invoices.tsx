@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Check, CreditCard, AlertCircle } from "lucide-react";
+import { Check, CreditCard, AlertCircle, Plus, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -23,11 +23,18 @@ function InvoicesPage() {
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [itemDialog, setItemDialog] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
   const { data: invoices = [] } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("invoices").select("*, accounts!inner(name, type, archived)").eq("accounts.archived", false).order("due_date", { ascending: false });
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*, accounts!inner(name, type, archived)")
+        .eq("accounts.archived", false)
+        .order("due_date", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -55,7 +62,6 @@ function InvoicesPage() {
     if (!user || !payInv) return;
     if (!payAccount) { toast.error("Escolha a conta de pagamento"); return; }
 
-    // Cria transaction de despesa "Pagamento de fatura"
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "expense",
@@ -68,13 +74,11 @@ function InvoicesPage() {
     });
     if (txErr) { toast.error(txErr.message); return; }
 
-    // Debita saldo da conta de pagamento
     const acc = accounts.find((a: any) => a.id === payAccount);
     if (acc) {
       await supabase.from("accounts").update({ current_balance: Number(acc.current_balance) - Number(payInv.total_amount) }).eq("id", acc.id);
     }
 
-    // Marca invoice como paga
     const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
     if (invErr) { toast.error(invErr.message); return; }
 
@@ -93,6 +97,52 @@ function InvoicesPage() {
     else { toast.success("Fatura reaberta"); qc.invalidateQueries({ queryKey: ["invoices"] }); }
   };
 
+  const openItemDialog = (inv: any) => {
+    setPayInv(inv);
+    setItemDialog(true);
+    setItemForm({ description: "", quantity: "1", unit_price: "" });
+  };
+
+  const saveItem = async () => {
+    if (!user || !payInv || !itemForm.description || !itemForm.unit_price) return;
+    const qty = Number(itemForm.quantity) || 1;
+    const unit = Number(itemForm.unit_price) || 0;
+    const amount = qty * unit;
+
+    const { error } = await supabase.from("invoice_items").insert({
+      user_id: user.id,
+      invoice_id: payInv.id,
+      description: itemForm.description,
+      quantity: qty,
+      unit_price: unit,
+      amount: amount,
+    });
+
+    if (error) { toast.error(error.message); return; }
+
+    // Recalcula total da fatura
+    const { data: items } = await supabase.from("invoice_items").select("*").eq("invoice_id", payInv.id);
+    const newTotal = (items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", payInv.id);
+
+    toast.success("Item adicionado");
+    setItemDialog(false);
+    setPayInv(null);
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
+  const removeItem = async (itemId: string, invId: string) => {
+    const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
+    if (error) { toast.error(error.message); return; }
+
+    const { data: items } = await supabase.from("invoice_items").select("*").eq("invoice_id", invId);
+    const newTotal = (items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", invId);
+
+    toast.success("Item removido");
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
   const open = invoices.filter((i: any) => i.status !== "paid");
   const paid = invoices.filter((i: any) => i.status === "paid");
 
@@ -108,7 +158,7 @@ function InvoicesPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} onPay={() => openPay(inv)} />)}
+            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} />)}
           </div>
         )}
       </section>
@@ -154,20 +204,75 @@ function InvoicesPage() {
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={itemDialog} onOpenChange={setItemDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Adicionar item</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Descrição</Label>
+              <Input value={itemForm.description} onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })} className="mt-1.5" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Quantidade</Label>
+                <Input type="number" min="1" step="1" value={itemForm.quantity} onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })} className="mt-1.5" />
+              </div>
+              <div>
+                <Label>Valor unitário</Label>
+                <Input type="number" step="0.01" value={itemForm.unit_price} onChange={(e) => setItemForm({ ...itemForm, unit_price: e.target.value })} className="mt-1.5" />
+              </div>
+            </div>
+            <Button onClick={saveItem} className="w-full">Adicionar item</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function InvCard({ inv, onPay, onReopen }: { inv: any; onPay?: () => void; onReopen?: () => void }) {
+function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => void; onReopen?: () => void; onAddItem?: () => void }) {
   const due = new Date(inv.due_date);
   const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const overdue = inv.status !== "paid" && days < 0;
   const urgent = inv.status !== "paid" && days >= 0 && days <= 5;
   const isPaid = inv.status === "paid";
 
+  const [items, setItems] = useState<any[]>([]);
+  const [loadingItems, setLoadingItems] = useState(true);
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    loadItems();
+  }, [inv.id]);
+
+  const loadItems = async () => {
+    setLoadingItems(true);
+    const { data } = await qc.fetchQuery({
+      queryKey: ["invoice_items", inv.id],
+      queryFn: async () => {
+        const { data } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
+        return data || [];
+      },
+    });
+    setItems(data || []);
+    setLoadingItems(false);
+  };
+
+  const removeItem = async (itemId: string) => {
+    const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
+    if (error) { toast.error(error.message); return; }
+    const newItems = items.filter(i => i.id !== itemId);
+    setItems(newItems);
+    const newTotal = newItems.reduce((s: number, i: any) => s + Number(i.amount), 0);
+    await supabase.from("invoices").update({ total_amount: newTotal }).eq("id", inv.id);
+    toast.success("Item removido");
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
   return (
     <div className={cn(
-      "rounded-2xl border bg-surface-1 p-4 flex items-center gap-3 shadow-card transition-all",
+      "rounded-2xl border bg-surface-1 p-4 flex items-start gap-3 shadow-card transition-all",
       overdue ? "border-audit-red/40" : urgent ? "border-audit-yellow/40" : "border-border",
       isPaid && "opacity-70"
     )}>
@@ -184,10 +289,47 @@ function InvCard({ inv, onPay, onReopen }: { inv: any; onPay?: () => void; onReo
         <div className="text-xs text-muted-foreground mt-0.5">
           {monthNames[inv.reference_month - 1]}/{inv.reference_year} · vence {formatDateBR(inv.due_date)}
         </div>
+        
+        {/* Items da fatura */}
+        <div className="mt-3 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">Itens</span>
+            {onAddItem && !isPaid && (
+              <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onAddItem}>
+                <Plus className="h-3 w-3 mr-1" /> Item
+              </Button>
+            )}
+          </div>
+          {loadingItems ? (
+            <div className="text-xs text-muted-foreground">Carregando...</div>
+          ) : items.length === 0 ? (
+            <div className="text-xs text-muted-foreground/70 italic">Nenhum item</div>
+          ) : (
+            <div className="space-y-1">
+              {items.map((item: any) => (
+                <div key={item.id} className="flex items-center justify-between bg-surface-2/50 rounded px-2 py-1">
+                  <div className="text-xs">
+                    <span className="font-medium">{item.quantity}x</span> {item.description}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs font-mono">{formatBRL(Number(item.amount))}</span>
+                    {!isPaid && (
+                      <button onClick={() => removeItem(item.id)} className="opacity-50 hover:opacity-100">
+                        <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount))}</div>
-      {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1" />Pagar</Button>}
-      {onReopen && <Button size="sm" variant="ghost" onClick={onReopen}>Reabrir</Button>}
+      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap ml-2">{formatBRL(Number(inv.total_amount))}</div>
+      <div className="flex flex-col gap-1">
+        {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1" />Pagar</Button>}
+        {onReopen && <Button size="sm" variant="ghost" onClick={onReopen}>Reabrir</Button>}
+      </div>
     </div>
   );
 }
