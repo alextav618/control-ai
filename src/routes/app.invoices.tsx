@@ -8,22 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Check, CreditCard, AlertCircle, Plus, Trash2, Pencil } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Check, CreditCard, AlertCircle, Plus, Trash2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-
-// Define the shape of a transaction row for insert operations
-type TransactionInsert = {
-  user_id: string;
-  type: string;
-  amount: number;
-  description: string;
-  occurred_on: string;
-  account_id: string;
-  status: string;
-  source: string;
-};
 
 export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
@@ -42,13 +30,17 @@ const recomputeInvoiceTotal = async (invoiceId: string) => {
 function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+
+  // State for paying an invoice
   const [payInv, setPayInv] = useState<any>(null);
-  const [payAccount, setPayAccount] = useState("");
-  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [payAccount, setPayAccount] = useState<string>("");
+  const [payDate, setPayDate] = useState<string>(new Date().toISOString().slice(0, 10));
+
+  // State for managing invoice items
   const [itemDialog, setItemDialog] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
+  // Load invoices
   const { data: invoices = [] } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
@@ -63,6 +55,7 @@ function InvoicesPage() {
     enabled: !!user,
   });
 
+  // Load accounts (used for payment)
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
@@ -74,38 +67,55 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
+  // Open payment dialog
   const openPay = (inv: any) => {
     setPayInv(inv);
     setPayAccount(cashAccounts[0]?.id ?? "");
     setPayDate(new Date().toISOString().slice(0, 10));
   };
 
+  // Confirm payment
   const confirmPay = async () => {
     if (!user || !payInv) return;
-    if (!payAccount) { toast.error("Escolha a conta de pagamento"); return; }
-
-    const { error: txErr } = await supabase
-      .from<TransactionInsert>("transactions")
-      .insert({
-        user_id: user.id,
-        type: "expense",
-        amount: Number(payInv.total_amount),
-        description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
-        occurred_on: payDate,
-        account_id: payAccount,
-        status: "paid",
-        source: "manual",
-      });
-
-    if (txErr) { toast.error(txErr.message); return; }
-
-    const acc = accounts.find((a: any) => a.id === payAccount);
-    if (acc) {
-      await supabase.from("accounts").update({ current_balance: Number(acc.current_balance) - Number(payInv.total_amount) }).eq("id", acc.id);
+    if (!payAccount) {
+      toast.error("Escolha a conta de pagamento");
+      return;
     }
 
-    const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
-    if (invErr) { toast.error(invErr.message); return; }
+    const { error: txErr } = await supabase.from("transactions").insert({
+      user_id: user.id,
+      type: "expense",
+      amount: Number(payInv.total_amount),
+      description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
+      occurred_on: payDate,
+      account_id: payAccount,
+      status: "paid",
+      source: "manual",
+    });
+
+    if (txErr) {
+      toast.error(txErr.message);
+      return;
+    }
+
+    // Update account balance (simple subtraction)
+    const acc = accounts.find((a: any) => a.id === payAccount);
+    if (acc) {
+      await supabase
+        .from("accounts")
+        .update({ current_balance: Number(acc.current_balance) - Number(payInv.total_amount) })
+        .eq("id", acc.id);
+    }
+
+    const { error: invErr } = await supabase
+      .from("invoices")
+      .update({ status: "paid", paid_at: new Date().toISOString() })
+      .eq("id", payInv.id);
+
+    if (invErr) {
+      toast.error(invErr.message);
+      return;
+    }
 
     toast.success("Fatura paga ✓");
     setPayInv(null);
@@ -115,19 +125,25 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
+  // Reopen a paid invoice
   const reopen = async (inv: any) => {
     if (!confirm("Reabrir esta fatura? Os lançamentos não são removidos automaticamente.")) return;
     const { error } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", inv.id);
     if (error) toast.error(error.message);
-    else { toast.success("Fatura reaberta"); qc.invalidateQueries({ queryKey: ["invoices"] }); }
+    else {
+      toast.success("Fatura reaberta");
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    }
   };
 
+  // Open dialog to add an item to an invoice
   const openItemDialog = (inv: any) => {
     setPayInv(inv);
     setItemDialog(true);
     setItemForm({ description: "", quantity: "1", unit_price: "" });
   };
 
+  // Save new invoice item
   const saveItem = async () => {
     if (!user || !payInv || !itemForm.description || !itemForm.unit_price) return;
     const qty = Number(itemForm.quantity) || 1;
@@ -140,207 +156,190 @@ function InvoicesPage() {
       description: itemForm.description,
       quantity: qty,
       unit_price: unit,
-      amount: amount,
+      amount,
     });
 
-    if (error) { toast.error(error.message); return; }
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
 
     await recomputeInvoiceTotal(payInv.id);
-
     toast.success("Item adicionado");
     setItemDialog(false);
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
+  // Remove an item from an invoice
   const removeItem = async (itemId: string, invId: string) => {
     const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
-    if (error) { toast.error(error.message); return; }
-
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
     await recomputeInvoiceTotal(invId);
-
     toast.success("Item removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
-  const open = invoices.filter((i: any) => i.status !== "paid");
-  const paid = invoices.filter((i: any) => i.status === "paid");
+  // Separate open and paid invoices for display
+  const openInvoices = invoices.filter((i: any) => i.status !== "paid");
+  const paidInvoices = invoices.filter((i: any) => i.status === "paid");
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-2">
-        <h1 className="font-display text-2xl md:text-3xl font-bold">Recorrentes</h1>
-        <p className="text-sm text-muted-foreground mb-6">{monthNames[new Date().getMonth()]} de {new Date().getFullYear()}</p>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
+        <p className="text-sm text-muted-foreground">
+          {monthNames[new Date().getMonth()]} de {new Date().getFullYear()}
+        </p>
       </div>
 
-      <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
-        {open.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground text-sm">Nada cadastrado. A IA também pode criar pelo chat.</div>
+      {/* Open invoices */}
+      <section className="rounded-2xl border border-border bg-surface-1 overflow-hidden mb-6">
+        {openInvoices.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma fatura em aberto.</div>
         ) : (
           <div className="divide-y divide-border">
-            {open.map((b: any) => {
-              const occ = occByBill.get(b.id);
-              const paid = occ?.status === "paid";
-              const isVar = b.amount_kind === "variable";
-              const displayAmount = paid ? Number(occ.amount) : Number(b.expected_amount);
-              return (
-                <div key={b.id} className="p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className={cn(
-                      "rounded-2xl px-4 py-2.5",
-                      paid
-                        ? "bg-audit-green"
-                        : "bg-audit-yellow"
-                    )}>
-                      <span className={cn("h-2 w-2 rounded-full shrink-0", paid ? "bg-audit-green" : "bg-audit-yellow")} />
-                      <span className="truncate">{b.description}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className={cn("font-mono tabular font-semibold", paid ? "text-income" : "text-expense")}>
-                        {isVar && !paid ? "—" : formatBRL(displayAmount)}
-                      </span>
-                      {!paid && (
-                        <Button size="sm" variant="outline" onClick={() => {
-                          setPayOpen(b.id);
-                          setPayAmount(isVar ? "" : String(b.expected_amount));
-                        }}>
-                          <Check className="h-3.5 w-3.5 mr-1" /> Lançar
-                        </Button>
-                      )}
-                      <Button size="icon" variant="ghost" onClick={() => remove(b.id)}><Trash2 className="h-3 w-3 text-muted-foreground" /></Button>
-                    </div>
-                  </div>
-                  {payOpen === b.id && (
-                    <div className="mt-3 flex items-center gap-2 p-3 rounded-lg bg-surface-2 border border-border text-sm">
-                      <Label className="text-xs">Valor pago neste mês</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={payAmount}
-                        onChange={(e) => setPayAmount(e.target.value)}
-                        autoFocus
-                        className="max-w-[160px]"
-                      />
-                      <Button size="sm" onClick={() => markPaid(b, Number(payAmount))}>Confirmar</Button>
-                      <Button size="sm" variant="ghost" onClick={() => { setPayOpen(null); setPayAmount(""); }}>Cancelar</Button>
-                    </div>
-                  )}
+            {openInvoices.map((inv: any) => (
+              <div key={inv.id} className="p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{inv.accounts?.name}</div>
+                  <div className="font-mono tabular text-xl">{formatBRL(Number(inv.total_amount))}</div>
                 </div>
-              );
-            })}
+                <div className="flex items-center gap-2 text-sm">
+                  <Button size="sm" variant="outline" onClick={() => openPay(inv)}>
+                    <Check className="h-3.5 w-3.5 mr-1" /> Pagar
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => openItemDialog(inv)}>
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Item
+                  </Button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-      </div>
+      </section>
 
-      <div className="border-t border-border bg-surface-1/80 backdrop-blur px-4 md:px-6 py-4">
-        <div className="max-w-3xl mx-auto">
-          {(imageData || audioBlob) && (
-            <div className="mb-3 flex items-center gap-2">
-              {imageData && (
-                <div className="relative">
-                  <img src={imageData.preview} alt="prévia" className="h-16 w-16 object-cover rounded-lg border border-border" />
-                  <button onClick={() => setImageData(null)} className="absolute -top-1.5 -right-1.5 bg-background border border-border rounded-full p-0.5">
-                    <X className="h-3 w-3" />
-                  </button>
+      {/* Paid invoices */}
+      <section className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
+        {paidInvoices.length === 0 ? (
+          <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma fatura paga.</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {paidInvoices.map((inv: any) => (
+              <div key={inv.id} className="p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="font-medium">{inv.accounts?.name}</div>
+                  <div className="font-mono tabular text-xl text-audit-green">{formatBRL(Number(inv.total_amount))}</div>
                 </div>
-              )}
-              {audioBlob && (
-                <div className="flex items-center gap-2 px-3 py-2 bg-surface-2 rounded-lg border border-border text-sm">
-                  <Mic className="h-4 w-4 text-primary" />
-                  Áudio gravado ({Math.round(audioBlob.size / 1024)} KB)
-                  <button onClick={() => setAudioBlob(null)}><X className="h-3 w-3" /></button>
+                <div className="flex items-center gap-2 text-sm">
+                  <Button size="sm" variant="ghost" onClick={() => reopen(inv)}>
+                    <AlertCircle className="h-3.5 w-3.5 mr-1" /> Reabrir
+                  </Button>
                 </div>
-              )}
-            </div>
-          )}
-          <div className="flex items-end gap-2">
-            <label className="cursor-pointer p-2.5 rounded-lg transition-colors hover:bg-surface-2 text-muted-foreground">
-              <ImageIcon className="h-5 w-5" />
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && handlePickImage(e.target.files[0])} />
-            </label>
-            <Button onClick={send} disabled={sending || (!text.trim() && !imageData && !audioBlob)} size="icon" className="h-11 w-11">
-              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Pay dialog */}
+      <Dialog open={!!payInv && !!payAccount} onOpenChange={(open) => !open && setPayInv(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Pagar fatura {payInv?.accounts?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Label>Conta de pagamento</Label>
+            <Select value={payAccount} onValueChange={setPayAccount}>
+              <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a conta" /></SelectTrigger>
+              <SelectContent>
+                {cashAccounts.map((a: any) => (
+                  <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Label>Data</Label>
+            <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="mt-1.5" />
+
+            <Button onClick={confirmPay} className="w-full">
+              Confirmar pagamento
             </Button>
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+        </DialogContent>
+      </Dialog>
 
-function EmptyState() {
-  return (
-    <div className="text-center py-10">
-      <div className="inline-flex h-14 w-14 rounded-2xl bg-gradient-primary items-center justify-center text-primary-foreground font-display font-bold text-xl shadow-glow mb-4">
-        I      </div>
-      <h2 className="font-display text-2xl font-semibold mb-4">Bom te ver.</h2>
-      <p className="text-muted-foreground mt-2 max-w-md mx-auto text-sm">
-        Mande texto, foto ou áudio. A IControl IA estrutura tudo.
-      </p>
-    </div>
-  );
-}
+      {/* Item dialog */}
+      <Dialog open={itemDialog} onOpenChange={setItemDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar item à fatura</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Label>Descrição</Label>
+            <Input value={itemForm.description} onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })} className="mt-1.5" />
 
-function MessageBubble({ msg }: { msg: Msg }) {
-  const isUser = msg.role === "user";
-  const actions = msg.metadata?.actions ?? [];
-  return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div className={cn("max-w-[85%] md:max-w-[70%] space-y-2")}>
-        <div
-          className={cn(
-            "rounded-2xl px-4 py-2.5",
-            isUser
-              ? "bg-primary text-primary-foreground rounded-br-sm"
-              : "bg-surface-2 text-foreground border border-border rounded-bl-sm"
-          )}
-        >
-          {msg.attachment_url && msg.attachment_type === "image" && (
-            <img src={msg.attachment_url} alt="anexo" className="rounded-lg mb-2 max-h-64" />
-          )}
-          {msg.attachment_url && msg.attachment_type === "audio" && (
-            <audio controls src={msg.attachment_url} className="mb-2 w-full" />
-          )}
-          <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
-        </div>
-        {!isUser && actions.length > 0 && actions.map((a: any, i: number) => (
-          <ActionCard key={i} action={a} />
-        ))}
-      </div>
-    </div>
-  );
-}
+            <Label>Quantidade</Label>
+            <Input type="number" min="1" value={itemForm.quantity} onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })} className="mt-1.5" />
 
-function ActionCard({ action }: { action: any }) {
-  if (action.type === "transaction") {
-    const t = action.transaction;
-    const level = t.audit_level;
-    const dot =
-      level === "green" ? "bg-audit-green" :
-      level === "yellow" ? "bg-audit-yellow" :
-      level === "red" ? "bg-audit-red" : "bg-muted-foreground";
-    return (
-      <div className="rounded-xl bg-surface-1 border border-border px-4 py-3 text-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className={cn("h-2 w-2 rounded-full shrink-0", dot)} />
-            <span className="truncate">{t.description}</span>
+            <Label>Preço unitário</Label>
+            <Input type="number" step="0.01" value={itemForm.unit_price} onChange={(e) => setItemForm({ ...itemForm, unit_price: e.target.value })} className="mt-1.5" />
+
+            <Button onClick={saveItem} className="w-full">
+              Salvar item
+            </Button>
           </div>
-          <span className={cn("font-mono tabular font-semibold shrink-0", t.type === "income" ? "text-income" : "text-expense")}>
-            {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
-          </span>
-        </div>
-        {t.audit_reason && <p className="text-xs text-muted-foreground mt-1.5">{t.audit_reason}</p>}
-      </div>
-    );
-  }
-  if (action.type === "account") return <Tag>Conta criada: {action.account.name}</Tag>;
-  if (action.type === "fixed_bill") return <Tag>Conta fixa: {action.bill.name}</Tag>;
-  if (action.type === "category") return <Tag>Categoria: {action.category.name}</Tag>;
-  if (action.type === "error") return <div className="text-xs text-destructive">⚠ {action.message}</div>;
-  return null;
+        </DialogContent>
+      </Dialog>
+
+      {/* List items of selected invoice (if any) */}
+      {payInv && (
+        <section className="mt-6">
+          <h2 className="font-display text-lg mb-3">Itens da fatura</h2>
+          <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
+            {/* Fetch items for the selected invoice */}
+            <InvoiceItems invoiceId={payInv.id} onRemove={removeItem} />
+          </div>
+        </section>
+      )}
+    </div>
+  );
 }
 
-function Tag({ children }: { children: React.ReactNode }) {
-  return <div className="inline-block text-xs px-2.5 py-1 rounded-md bg-surface-2 border border-border text-muted-foreground">{children}</div>;
+/* Helper component to list items of a given invoice */
+function InvoiceItems({ invoiceId, onRemove }: { invoiceId: string; onRemove: (itemId: string, invId: string) => void }) {
+  const { data: items = [] } = useQuery({
+    queryKey: ["invoice_items", invoiceId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!invoiceId,
+  });
+
+  if (items.length === 0) {
+    return <div className="p-4 text-center text-muted-foreground text-sm">Nenhum item cadastrado.</div>;
+  }
+
+  return (
+    <div className="divide-y divide-border">
+      {items.map((it: any) => (
+        <div key={it.id} className="p-3 flex items-center justify-between">
+          <div className="flex flex-col">
+            <span className="font-medium">{it.description}</span>
+            <span className="text-xs text-muted-foreground">
+              {it.quantity} × {formatBRL(Number(it.unit_price))} = {formatBRL(Number(it.amount))}
+            </span>
+          </div>
+          <Button size="icon" variant="ghost" onClick={() => onRemove(it.id, invoiceId)}>
+            <X className="h-4 w-4 text-muted-foreground" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
 }
