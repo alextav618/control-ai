@@ -70,17 +70,37 @@ function InvestmentsPage() {
     name: "", type: "fixed_income", indexer: "cdi", rate: "", account_id: "", ticker: "", maturity_date: "",
   });
 
-  const { data: assets = [] } = useQuery({
+  // ✅ Fix: Add generic types to queries so TS knows the shape of returned rows
+  const { data: assets = [] } = useQuery<Array<{
+    id: string;
+    name: string;
+    type: string;
+    indexer: string;
+    rate: number | null;
+    account_id: string | null;
+    ticker: string | null;
+    maturity_date: string | null;
+    archived: boolean;
+  }>>({
     queryKey: ["assets", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("investment_assets").select("*").eq("archived", false).order("created_at", { ascending: false });
+      const { data, error } = await supabase
+        .from("investment_assets")
+        .select("*")
+        .eq("archived", false)
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
     enabled: !!user,
   });
 
-  const { data: accounts = [] } = useQuery({
+  const { data: accounts = [] } = useQuery<Array<{
+    id: string;
+    name: string;
+    type: string;
+    icon?: string;
+  }>>({
     queryKey: ["accounts_for_invest", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("accounts").select("id,name,type,icon").eq("archived", false).order("name");
@@ -90,7 +110,13 @@ function InvestmentsPage() {
     enabled: !!user,
   });
 
-  const { data: indexRates = [] } = useQuery({
+  const { data: indexRates = [] } = useQuery<Array<{
+    code: string;
+    annual_rate: number;
+    reference_date: string;
+    updated_at: string;
+    source: string | null;
+  }>>({
     queryKey: ["index_rates"],
     queryFn: async () => {
       const { data, error } = await (supabase as any).from("index_rates").select("*");
@@ -123,7 +149,13 @@ function InvestmentsPage() {
     }
   };
 
-  const { data: allMov = [] } = useQuery({
+  // ✅ Fix: Add generic types for movement rows
+  const { data: allMov = [] } = useQuery<Array<{
+    id: string;
+    asset_id: string;
+    type: "deposit" | "withdrawal" | "interest" | "dividend" | "fee" | "tax";
+    amount: number;
+  }>>({
     queryKey: ["all_movements", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_movements").select("*");
@@ -133,7 +165,13 @@ function InvestmentsPage() {
     enabled: !!user,
   });
 
-  const { data: allSnaps = [] } = useQuery({
+  // ✅ Fix: Add generic types for snapshot rows
+  const { data: allSnaps = [] } = useQuery<Array<{
+    id: string;
+    asset_id: string;
+    market_value: number;
+    snapshot_date: string;
+  }>>({
     queryKey: ["all_snapshots", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false });
@@ -143,21 +181,22 @@ function InvestmentsPage() {
     enabled: !!user,
   });
 
+  // ✅ Fix: Now TS knows assets/allMov/allSnaps have the expected fields
   const positions = useMemo(() => {
     const map = new Map<string, { invested: number; withdrawn: number; income: number; lastSnap: number | null; lastSnapDate: string | null }>();
     for (const a of assets) map.set(a.id, { invested: 0, withdrawn: 0, income: 0, lastSnap: null, lastSnapDate: null });
     for (const m of allMov) {
-      const p = map.get(m.asset_id as string); if (!p) continue;
-      const amt = Number(m.amount as number);
+      const p = map.get(m.asset_id); if (!p) continue;
+      const amt = Number(m.amount);
       if (m.type === "deposit") p.invested += amt;
       else if (m.type === "withdrawal") p.withdrawn += amt;
       else if (m.type === "interest" || m.type === "dividend") p.income += amt;
       else if (m.type === "fee" || m.type === "tax") p.income -= amt;
     }
     for (const s of allSnaps) {
-      const p = map.get(s.asset_id as string); if (!p) continue;
+      const p = map.get(s.asset_id); if (!p) continue;
       if (!p.lastSnap || (p.lastSnapDate && s.snapshot_date > p.lastSnapDate)) {
-        p.lastSnap = Number(s.market_value as number);
+        p.lastSnap = Number(s.market_value);
         p.lastSnapDate = s.snapshot_date;
       }
     }
@@ -377,7 +416,7 @@ function RateChip({ label, value }: { label: string; value: number | undefined }
 function KpiCard({ label, value, accent, tone, icon }: { label: string; value: string; accent?: boolean; tone?: "green" | "red"; icon?: React.ReactNode }) {
   return (
     <div className={cn("rounded-2xl border border-border bg-surface-1 p-4", accent && "bg-gradient-to-br from-surface-1 to-surface-2")}>
-      <div className="text-xs text-muted-foreground flex items-center gap-1.5">{icon}{label}</div>
+      <div className={cn("text-xs text-muted-foreground flex items-center gap-1.5", tone === "green" && "text-audit-green", tone === "red" && "text-audit-red")}>{icon}{label}</div>
       <div className={cn("font-mono font-bold text-2xl tabular mt-1", tone === "green" && "text-audit-green", tone === "red" && "text-audit-red")}>{value}</div>
     </div>
   );
@@ -391,7 +430,13 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
   const [movForm, setMovForm] = useState({ type: "deposit", amount: "", occurred_on: new Date().toISOString().slice(0, 10), notes: "" });
   const [snapForm, setSnapForm] = useState({ market_value: "", snapshot_date: new Date().toISOString().slice(0, 10) });
 
-  const { data: movements = [] } = useQuery({
+  const { data: movements = [] } = useQuery<Array<{
+    id: string;
+    type: string;
+    amount: number;
+    occurred_on: string;
+    notes: string | null;
+  }>>({
     queryKey: ["movements", asset.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_movements").select("*").eq("asset_id", asset.id).order("occurred_on", { ascending: false });
@@ -400,7 +445,11 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
     },
   });
 
-  const { data: snapshots = [] } = useQuery({
+  const { data: snapshots = [] } = useQuery<Array<{
+    id: string;
+    market_value: number;
+    snapshot_date: string;
+  }>>({
     queryKey: ["snapshots", asset.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_snapshots").select("*").eq("asset_id", asset.id).order("snapshot_date", { ascending: false });
@@ -415,7 +464,6 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
   const profitPct = net > 0 ? (profit / net) * 100 : 0;
   const account = accounts.find((a) => a.id === asset.account_id);
   const eff = effectiveAnnualRate(asset.indexer, asset.rate, ratesMap);
-  // Projeção de rendimento mensal (taxa anual -> mensal composta)
   const monthlyYield = eff != null ? cur * (Math.pow(1 + eff / 100, 1 / 12) - 1) : null;
 
   const addMov = async () => {
@@ -557,7 +605,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
           <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
             {movements.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma movimentação ainda.</div>}
             <div className="divide-y divide-border">
-              {movements.map((m: any) => {
+              {movements.map((m) => {
                 const meta = MOV_TYPES[m.type];
                 return (
                   <div key={m.id} className="p-3 flex items-center gap-3">
@@ -579,7 +627,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
           <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
             {snapshots.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma foto ainda. Atualize o valor pra ver evolução.</div>}
             <div className="divide-y divide-border">
-              {snapshots.map((s: any) => (
+              {snapshots.map((s) => (
                 <div key={s.id} className="p-3 flex items-center gap-3">
                   <div className="flex-1">
                     <div className="font-medium text-sm">{formatDateBR(s.snapshot_date)}</div>
