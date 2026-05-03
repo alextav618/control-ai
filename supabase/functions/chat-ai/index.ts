@@ -376,51 +376,90 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
 async function handleTransaction(supabase: any, userId: string, args: any, ctx: any) {
   const occurred = args.occurred_on || new Date().toISOString().slice(0, 10);
   const account = ctx.accounts.find((a: any) => a.id === args.account_id);
-  let invoice = null;
-  if (account?.type === "credit_card" && args.type === "expense") {
-    invoice = await ensureInvoice(supabase, userId, account, occurred);
-  }
+  const isCard = account?.type === "credit_card" && args.type === "expense";
 
-  // Parcelamento
-  let installmentPlanId: string | null = null;
-  let installmentNumber: number | null = null;
-  if (args.installment?.total_installments && args.installment.total_installments > 1) {
-    const total = args.installment.total_amount ?? args.installment.installment_amount * args.installment.total_installments;
+  // Parcelamento → cria plano + N transações (uma por parcela), cada uma vinculada à fatura do mês correspondente
+  const totalInst = Number(args.installment?.total_installments ?? 0);
+  if (totalInst > 1) {
+    const instAmount = Number(args.installment.installment_amount);
+    const total = Number(args.installment.total_amount ?? instAmount * totalInst);
     const { data: plan, error: planErr } = await supabase
       .from("installment_plans")
       .insert({
         user_id: userId,
         description: args.description,
         total_amount: total,
-        installment_amount: args.installment.installment_amount,
-        total_installments: args.installment.total_installments,
+        installment_amount: instAmount,
+        total_installments: totalInst,
         account_id: account?.id ?? null,
         category_id: args.category_id ?? null,
         start_date: occurred,
       })
       .select()
       .single();
-    if (!planErr && plan) {
-      installmentPlanId = plan.id;
-      installmentNumber = 1;
+    if (planErr || !plan) {
+      console.error("plan insert error", planErr);
+      return { type: "error", message: planErr?.message ?? "plan_failed" };
     }
+
+    const baseDate = new Date(occurred + "T12:00:00Z");
+    const rows: any[] = [];
+    let firstInvoice: any = null;
+    for (let i = 0; i < totalInst; i++) {
+      const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
+      const occ_i = d.toISOString().slice(0, 10);
+      let inv: any = null;
+      if (isCard) {
+        inv = await ensureInvoice(supabase, userId, account, occ_i);
+        if (i === 0) firstInvoice = inv;
+      }
+      rows.push({
+        user_id: userId,
+        type: args.type,
+        amount: instAmount,
+        description: `${args.description} (${i + 1}/${totalInst})`,
+        occurred_on: occ_i,
+        account_id: account?.id ?? null,
+        category_id: args.category_id ?? null,
+        fixed_bill_id: args.fixed_bill_id ?? null,
+        installment_plan_id: plan.id,
+        installment_number: i + 1,
+        invoice_id: inv?.id ?? null,
+        audit_level: args.audit_level ?? null,
+        audit_reason: args.audit_reason ?? null,
+        source: "chat",
+        ai_raw: args,
+      });
+    }
+    const { data: txs, error: txErr } = await supabase.from("transactions").insert(rows).select();
+    if (txErr) {
+      console.error("tx batch insert error", txErr);
+      return { type: "error", message: txErr.message };
+    }
+    await supabase.from("audit_log").insert({
+      user_id: userId,
+      transaction_id: txs?.[0]?.id ?? null,
+      action: "created_installment_plan",
+      level: args.audit_level ?? null,
+      reasoning: args.audit_reason ?? null,
+      data: args,
+    });
+    return { type: "transaction", transaction: txs?.[0], invoice: firstInvoice };
   }
 
-  const insertAmount = installmentPlanId ? Number(args.installment.installment_amount) : Number(args.amount);
-
+  // Transação simples
+  const invoice = isCard ? await ensureInvoice(supabase, userId, account, occurred) : null;
   const { data: tx, error: txErr } = await supabase
     .from("transactions")
     .insert({
       user_id: userId,
       type: args.type,
-      amount: insertAmount,
+      amount: Number(args.amount),
       description: args.description,
       occurred_on: occurred,
       account_id: account?.id ?? null,
       category_id: args.category_id ?? null,
       fixed_bill_id: args.fixed_bill_id ?? null,
-      installment_plan_id: installmentPlanId,
-      installment_number: installmentNumber,
       invoice_id: invoice?.id ?? null,
       audit_level: args.audit_level ?? null,
       audit_reason: args.audit_reason ?? null,
