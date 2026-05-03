@@ -117,9 +117,6 @@ function Dashboard() {
   const now = new Date();
   const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
 
-  // Calculate total amount of all open invoices for display
-  const totalOpenInvoiceAmount = data?.openInvoices?.reduce((sum, inv) => sum + Number(inv.total_amount), 0) ?? 0;
-
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
       <div>
@@ -204,52 +201,27 @@ function Dashboard() {
         <Card title="Faturas em aberto">
           {data?.openInvoices.length === 0 && <Empty>Sem faturas em aberto.</Empty>}
           <div className="space-y-2">
-            {/* Display total sum of open invoices */}
-            <div className="rounded-xl bg-surface-2 p-4 border border-border">
-              <div className="font-medium text-primary">Total de faturas em aberto: <span className="font-mono">{formatBRL(totalOpenInvoiceAmount)}</span></div>
-              {data?.openInvoices.map((inv: any) => {
-                const due = new Date(inv.due_date);
-                const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                const urgent = days >= 0 && days <= 5;
-                const overdue = days < 0;
-                return (
-                  <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
-                    <div className="min-w-0">
-                      <div className="font-medium truncate flex items-center gap-2">
-                        {inv.accounts?.name}
-                        {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red">vencida</span>}
-                        {urgent && !overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        vence {new Date(inv.due_date).toLocaleDateString("pt-BR")}
-                      </div>
+            {data?.openInvoices.map((inv: any) => {
+              const due = new Date(inv.due_date);
+              const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+              const urgent = days >= 0 && days <= 5;
+              const overdue = days < 0;
+              return (
+                <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
+                  <div className="min-w-0">
+                    <div className="font-medium truncate flex items-center gap-2">
+                      {inv.accounts?.name}
+                      {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red">vencida</span>}
+                      {urgent && !overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
                     </div>
-                    <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount))}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="space-y-2">
-              {data?.openInvoices.map((inv: any) => {
-                const due = new Date(inv.due_date);
-                const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                const urgent = days >= 0 && days <= 5;
-                const overdue = days < 0;
-                return (
-                  <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <AlertCircle className={cn("h-4 w-4 shrink-0", overdue ? "text-audit-red" : urgent ? "text-audit-yellow" : "text-muted-foreground")} />
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{inv.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {overdue ? `atrasada ${Math.abs(days)}d` : days === 0 ? "vence hoje" : `vence em ${days}d`}
-                        </div>
+                    <div className="text-xs text-muted-foreground">
+                      vence {new Date(inv.due_date).toLocaleDateString("pt-BR")}
                     </div>
-                    <div className="font-mono tabular text-muted-foreground whitespace-nowrap">{inv.amount_kind === "variable" ? "—" : formatBRL(Number(inv.expected_amount))}</div>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount))}</div>
+                </div>
+              );
+            })}
           </div>
         </Card>
 
@@ -273,9 +245,10 @@ function Dashboard() {
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="font-mono tabular text-muted-foreground whitespace-nowrap">{b.amount_kind === "variable" ? "—" : formatBRL(Number(b.expected_amount))}</div>
+                </div>
+              );
+            })}
           </div>
         </Card>
 
