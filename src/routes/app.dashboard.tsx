@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Banknote, Ticket } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -27,10 +27,12 @@ function Dashboard() {
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
       const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
       const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR] = await Promise.all([
-        supabase.from("accounts").select("*").eq("archived", false).eq("is_active", true),
-        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type, name, category), invoices(id, account_id)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        supabase.from("accounts").select("*").eq("archived", false),
+        // FIX: Include invoice_id in transaction query to properly aggregate credit card spending
+        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type, name), invoices(id, account_id)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
-        supabase.from("invoices").select("*, accounts!inner(name, archived, type), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
+        // FIX: Include invoice items in open invoices calculation
+        supabase.from("invoices").select("*, accounts!inner(name, archived), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
@@ -54,16 +56,12 @@ function Dashboard() {
   const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
-  
-  // Calculate available balance (non-credit accounts)
-  const availableBalance = (data?.accounts ?? []).filter((a: any) => 
-    a.type !== "bank_credit" && a.type !== "credit_card"
-  ).reduce((sum: number, a: any) => sum + Number(a.current_balance), 0);
+  const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
 
-  // Credit card expenses
+  // FIX: Properly calculate credit card expenses including all transactions linked to invoices
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
-    (t.accounts?.type === "bank_credit" || t.accounts?.type === "credit_card" || t.invoices?.id)
+    (t.accounts?.type === "credit_card" || t.invoices?.id)
   ).reduce((s: number, t: any) => s + Number(t.amount), 0);
   
   const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
@@ -83,8 +81,12 @@ function Dashboard() {
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
-  // Invoice items total
-  const invoiceItemsTotal = (data?.invoiceItems ?? []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+  // FIX: Calculate invoice totals including both transactions and invoice items
+  const invoiceItemsTotal = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
+    const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
+    const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+    return sum + txTotal + itemsTotal;
+  }, 0);
 
   // === PROJEÇÃO 3 MESES ===
   const projection = useMemo(() => {
@@ -173,7 +175,7 @@ function Dashboard() {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <Kpi label="Disponível" value={formatBRL(availableBalance)} icon={Wallet} />
+        <Kpi label="Saldo em conta" value={formatBRL(totalCashBalance)} icon={Wallet} />
         <Kpi label="Receita do mês" value={formatBRL(income)} icon={TrendingUp} accent="income" />
         <Kpi label="Despesa do mês" value={formatBRL(expense)} icon={TrendingDown} accent="expense" />
         <Kpi label="Resultado" value={formatBRL(balance)} accent={balance >= 0 ? "income" : "expense"} />
@@ -218,6 +220,7 @@ function Dashboard() {
               const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
               const urgent = days >= 0 && days <= 5;
               const overdue = days < 0;
+              // FIX: Calculate total from both transactions and invoice_items
               const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
               const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
               const total = txTotal + itemsTotal;
