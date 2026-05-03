@@ -41,6 +41,10 @@ export const Route = createRootRoute({
       { property: "og:description", content: "Registre gastos por texto, foto ou áudio. A IA estrutura, audita e mantém suas finanças sempre precisas." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
+      { name: "twitter:title", content: "IControl IA — Auditoria financeira inteligente" },
+      { name: "twitter:description", content: "Registre gastos por texto, foto ou áudio. A IA estrutura, audita e mantém suas finanças sempre precisas." },
+      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/20170bad-771f-47ab-8aff-f8258d601804/id-preview-06c40d84--a3dae3fa-872d-49c9-b551-8f243ec97042.lovable.app-1777811998633.png" },
+      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/20170bad-771f-47ab-8aff-f8258d601804/id-preview-06c40d84--a3dae3fa-872d-49c9-b551-8f243ec97042.lovable.app-1777811998633.png" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
