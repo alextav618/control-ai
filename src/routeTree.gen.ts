@@ -10,7 +10,6 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AuthRouteImport } from './routes/auth'
-import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppTransactionsRouteImport } from './routes/app.transactions'
@@ -27,11 +26,6 @@ import { Route as ApiPublicHooksUpdateRatesRouteImport } from './routes/api/publ
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppRoute = AppRouteImport.update({
-  id: '/app',
-  path: '/app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -98,7 +92,6 @@ const ApiPublicHooksUpdateRatesRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
   '/app/bills': typeof AppBillsRoute
@@ -130,7 +123,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
   '/app/bills': typeof AppBillsRoute
@@ -148,7 +140,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/app'
     | '/auth'
     | '/app/accounts'
     | '/app/bills'
@@ -179,7 +170,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
-    | '/app'
     | '/auth'
     | '/app/accounts'
     | '/app/bills'
@@ -196,7 +186,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRoute
   ApiPublicHooksUpdateRatesRoute: typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -208,13 +197,6 @@ declare module '@tanstack/react-router' {
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app': {
-      id: '/app'
-      path: '/app'
-      fullPath: '/app'
-      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -304,37 +286,8 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface AppRouteChildren {
-  AppAccountsRoute: typeof AppAccountsRoute
-  AppBillsRoute: typeof AppBillsRoute
-  AppCategoriesRoute: typeof AppCategoriesRoute
-  AppDashboardRoute: typeof AppDashboardRoute
-  AppInsightsRoute: typeof AppInsightsRoute
-  AppInvestmentsRoute: typeof AppInvestmentsRoute
-  AppInvoicesRoute: typeof AppInvoicesRoute
-  AppProfilesRoute: typeof AppProfilesRoute
-  AppTransactionsRoute: typeof AppTransactionsRoute
-  AppIndexRoute: typeof AppIndexRoute
-}
-
-const AppRouteChildren: AppRouteChildren = {
-  AppAccountsRoute: AppAccountsRoute,
-  AppBillsRoute: AppBillsRoute,
-  AppCategoriesRoute: AppCategoriesRoute,
-  AppDashboardRoute: AppDashboardRoute,
-  AppInsightsRoute: AppInsightsRoute,
-  AppInvestmentsRoute: AppInvestmentsRoute,
-  AppInvoicesRoute: AppInvoicesRoute,
-  AppProfilesRoute: AppProfilesRoute,
-  AppTransactionsRoute: AppTransactionsRoute,
-  AppIndexRoute: AppIndexRoute,
-}
-
-const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRoute,
   ApiPublicHooksUpdateRatesRoute: ApiPublicHooksUpdateRatesRoute,
 }
