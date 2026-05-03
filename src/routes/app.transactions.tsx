@@ -49,8 +49,7 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
 
 /** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+  // Sum transactions linked to this invoice  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
   // Sum invoice items
@@ -130,13 +129,13 @@ function TxPage() {
   });
 
   const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
-    const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
-    const invoiceId = tx?.invoice_id;
-    
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) toast.error(error.message);
     else { 
+      // Get the transaction first to find its invoice_id
+      const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
+      const invoiceId = tx?.invoice_id;
+      
       // Recompute invoice total if this transaction was linked to an invoice
       if (invoiceId) {
         await recomputeInvoiceTotal(invoiceId);
@@ -189,6 +188,14 @@ function TxPage() {
         category_id: form.category_id || null,
       }).eq("id", editId);
       if (error) { toast.error(error.message); return; }
+      
+      // Recompute invoice total if this transaction is linked to an invoice
+      const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", editId).single();
+      const invoiceId = tx?.invoice_id;
+      if (invoiceId) {
+        await recomputeInvoiceTotal(invoiceId);
+      }
+      
       toast.success("Lançamento atualizado");
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
