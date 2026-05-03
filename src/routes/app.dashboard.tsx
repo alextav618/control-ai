@@ -4,8 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useState } from "react";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { ChatPanel } from "@/components/chat/ChatPanel";
 
 export const Route = createFileRoute("/app/dashboard")({
   component: Dashboard,
