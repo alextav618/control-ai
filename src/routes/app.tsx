@@ -25,7 +25,6 @@ function AppLayout() {
   }
 
   const nav = [
-    { to: "/app", label: "Chat", icon: MessageSquare, exact: true },
     { to: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
     { to: "/app/insights", label: "Insights", icon: Sparkles },
     { to: "/app/transactions", label: "Lançamentos", icon: Receipt },
