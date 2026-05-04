@@ -141,7 +141,7 @@ function Dashboard() {
         .filter((inv) => inv.reference_month === m && inv.reference_year === y)
         .reduce((s, inv) => {
           const txTotal = (inv.transactions || []).reduce((sum: number, t: any) => sum + Number(t.amount), 0);
-          const itemsTotal = (inv.invoice_items || []).reduce((sum: number, i: any) => sum + Number(i.amount), 0);
+          const itemsTotal = (inv.invoice_items || []).reduce((sum: number, i: any) => s + Number(i.amount), 0);
           const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
           return s + txTotal + itemsTotal + initialBalance;
         }, 0);
