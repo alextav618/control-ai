@@ -47,25 +47,14 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   };
 }
 
-/** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
-const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
-  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-  
-  // Sum invoice items
-  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
-  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-  
-  const total = txTotal + itemsTotal;
-  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
-};
+// Recálculo da fatura é feito automaticamente pelo trigger trg_transactions_invoice_recompute no Postgres.
 
 function TxPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     type: "expense",
     description: "",
@@ -130,20 +119,13 @@ function TxPage() {
   });
 
   const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
-    const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
-    const invoiceId = tx?.invoice_id;
-    
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) toast.error(error.message);
-    else { 
-      // Recompute invoice total if this transaction was linked to an invoice
-      if (invoiceId) {
-        await recomputeInvoiceTotal(invoiceId);
-      }
-      toast.success("Removido"); 
-      qc.invalidateQueries({ queryKey: ["transactions"] }); 
-      qc.invalidateQueries({ queryKey: ["dashboard"] }); 
+    else {
+      toast.success("Removido");
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     }
   };
 
@@ -173,10 +155,13 @@ function TxPage() {
   };
 
   const submit = async () => {
+    if (submitting) return; // previne duplo submit
     if (!user || !form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+    setSubmitting(true);
+    try {
 
     // === EDIÇÃO ===
     if (editId) {
@@ -250,18 +235,17 @@ function TxPage() {
 
     const { error } = await supabase.from("transactions").insert(rows as any);
     if (error) { toast.error(error.message); return; }
-    
-    // After inserting transactions, update invoice totals for all affected invoices
-    const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-    for (const invId of invoiceIds) {
-      await recomputeInvoiceTotal(invId);
-    }
-    
+
+    // Totais das faturas são recalculados automaticamente pelo trigger no Postgres.
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
@@ -328,7 +312,7 @@ function TxPage() {
                   💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
                 </p>
               )}
-              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
+              <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : (editId ? "Salvar alterações" : "Lançar")}</Button>
             </div>
           </DialogContent>
         </Dialog>
