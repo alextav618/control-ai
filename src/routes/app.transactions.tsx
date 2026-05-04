@@ -243,7 +243,9 @@ function TxPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
     qc.invalidateQueries({ queryKey: ["invoices"] });
-  };
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
