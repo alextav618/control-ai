@@ -20,53 +20,54 @@ Deno.serve(async (req) => {
     const userId = userData.user.id;
 
     const body = await req.json();
-    const { fromBankId, toBankId, amount, description } = body;
+    // Corrigido para usar os nomes exatos esperados no Postgres
+    const { p_from_bank_id, p_to_bank_id, p_amount, p_description } = body;
 
-    // Basic validation
-    if (!fromBankId || !toBankId || amount <= 0 || fromBankId === toBankId) {
-      return new Response(JSON.stringify({ error: "Invalid transfer parameters" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Validação básica
+    if (!p_from_bank_id || !p_to_bank_id || p_amount <= 0 || p_from_bank_id === p_to_bank_id) {
+      return new Response(JSON.stringify({ error: "Parâmetros inválidos" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Check if banks exist
-    const fromBank = await supabase.from("banks").select("id, balance").eq("id", fromBankId).single();
-    const toBank = await supabase.from("banks").select("id, balance").eq("id", toBankId).single();
+    // Verificação de existência das contas
+    const fromBank = await supabase.from("banks").select("id, balance").eq("id", p_from_bank_id).single();
+    const toBank = await supabase.from("banks").select("id, balance").eq("id", p_to_bank_id).single();
 
     if (!fromBank || !toBank) {
-      return new Response(JSON.stringify({ error: "One or both banks not found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "Uma ou ambas as contas não encontradas" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Check sufficient balance
-    if (fromBank.balance < amount) {
-      return new Response(JSON.stringify({ error: "Insufficient funds in source bank" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Verificação de saldo suficiente
+    if (fromBank.balance < p_amount) {
+      return new Response(JSON.stringify({ error: "Saldo insuficiente na conta de origem" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Execute transfer
+    // Execução da transferência
     const { data: result, error: transferErr } = await supabase.from("bank_transfers").insert({
       user_id: userId,
-      from_bank_id: fromBankId,
-      to_bank_id: toBankId,
-      amount: amount,
-      description: description || "Transfer",
+      from_bank_id: p_from_bank_id,
+      to_bank_id: p_to_bank_id,
+      amount: p_amount,
+      description: p_description || "Transferência",
       status: "completed",
       created_at: new Date().toISOString(),
     }).select().single();
 
     if (transferErr) {
-      return new Response(JSON.stringify({ error: "Transfer failed" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "Falha na transferência" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Update bank balances
+    // Atualização dos saldos
     await supabase.from("banks").update({
-      balance: fromBank.balance - amount
-    }).eq("id", fromBankId);
+      balance: fromBank.balance - p_amount
+    }).eq("id", p_from_bank_id);
 
     await supabase.from("banks").update({
-      balance: toBank.balance + amount
-    }).eq("id", toBankId);
+      balance: toBank.balance + p_amount
+    }).eq("id", p_to_bank_id);
 
     return new Response(JSON.stringify({ success: true, transferId: result.id }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("transfer_funds error", e);
-    return new Response(JSON.stringify({ error: "Internal server error" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: "Erro interno do servidor" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
