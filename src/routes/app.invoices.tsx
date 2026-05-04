@@ -38,6 +38,8 @@ function InvoicesPage() {
   const [itemDialog, setItemDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
+  const [initialBalanceDialog, setInitialBalanceDialog] = useState(false);
+  const [initialBalanceForm, setInitialBalanceForm] = useState({ invoice_id: "", initial_balance: "" });
 
   const { data: invoices = [] } = useQuery({
     queryKey: ["invoices", user?.id],
@@ -58,6 +60,19 @@ function InvoicesPage() {
     queryFn: async () => {
       const { data } = await supabase.from("accounts").select("*").eq("archived", false);
       return data ?? [];
+    },
+    enabled: !!user,
+  });
+
+  const { data: initialBalances = [] } = useQuery({
+    queryKey: ["initial_balances", user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("invoice_initial_balances")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -150,6 +165,51 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
+  const openInitialBalanceDialog = (inv: any) => {
+    setInitialBalanceDialog(true);
+    setInitialBalanceForm({ invoice_id: inv.id, initial_balance: "" });
+  };
+
+  const saveInitialBalance = async () => {
+    if (!user || !initialBalanceForm.invoice_id || !initialBalanceForm.initial_balance) return;
+    
+    const amount = Number(initialBalanceForm.initial_balance);
+    if (isNaN(amount)) {
+      toast.error("Informe um valor válido");
+      return;
+    }
+
+    const { error } = await supabase.from("invoice_initial_balances").upsert({
+      user_id: user.id,
+      invoice_id: initialBalanceForm.invoice_id,
+      initial_balance: amount,
+    }, { onConflict: "invoice_id" });
+
+    if (error) { toast.error(error.message); return; }
+
+    await recomputeInvoiceTotal(initialBalanceForm.invoice_id);
+    
+    toast.success("Saldo inicial salvo");
+    setInitialBalanceDialog(false);
+    setInitialBalanceForm({ invoice_id: "", initial_balance: "" });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
+  const removeInitialBalance = async (invoiceId: string) => {
+    const { error } = await supabase.from("invoice_initial_balances").delete().eq("invoice_id", invoiceId);
+    if (error) { toast.error(error.message); return; }
+
+    await recomputeInvoiceTotal(invoiceId);
+    
+    toast.success("Saldo inicial removido");
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
+
+  const getInitialBalance = (invoiceId: string) => {
+    const balance = initialBalances.find((b: any) => b.invoice_id === invoiceId);
+    return balance ? balance.initial_balance : 0;
+  };
+
   const open = invoices.filter((i: any) => i.status !== "paid");
   const paid = invoices.filter((i: any) => i.status === "paid");
 
@@ -165,7 +225,7 @@ function InvoicesPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} />)}
+            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} onSetInitialBalance={() => openInitialBalanceDialog(inv)} />)}
           </div>
         )}
       </section>
@@ -234,11 +294,34 @@ function InvoicesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={initialBalanceDialog} onOpenChange={setInitialBalanceDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Definir saldo inicial</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Defina um valor inicial para esta fatura. Será somado ao total das transações do mês.
+            </p>
+            <div>
+              <Label>Saldo inicial (R$)</Label>
+              <Input 
+                type="number" 
+                step="0.01" 
+                value={initialBalanceForm.initial_balance} 
+                onChange={(e) => setInitialBalanceForm({ ...initialBalanceForm, initial_balance: e.target.value })}
+                placeholder="Ex: 500.00"
+                className="mt-1.5" 
+              />
+            </div>
+            <Button onClick={saveInitialBalance} className="w-full">Salvar saldo inicial</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => void; onReopen?: () => void; onAddItem?: () => void }) {
+function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance }: { inv: any; onPay?: () => void; onReopen?: () => void; onAddItem?: () => void; onSetInitialBalance?: () => void }) {
   const due = new Date(inv.due_date);
   const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const overdue = inv.status !== "paid" && days < 0;
@@ -256,7 +339,6 @@ function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => 
   const loadItems = async () => {
     setLoadingItems(true);
     try {
-      // FIX: fetchQuery returns the data directly, not { data }
       const data = await qc.fetchQuery({
         queryKey: ["invoice_items", inv.id],
         queryFn: async () => {
@@ -342,6 +424,11 @@ function InvCard({ inv, onPay, onReopen, onAddItem }: { inv: any; onPay?: () => 
       <div className="flex flex-col gap-1">
         {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1" />Pagar</Button>}
         {onReopen && <Button size="sm" variant="ghost" onClick={onReopen}>Reabrir</Button>}
+        {!isPaid && onSetInitialBalance && (
+          <Button size="sm" variant="outline" onClick={onSetInitialBalance}>
+            Saldo inicial
+          </Button>
+        )}
       </div>
     </div>
   );

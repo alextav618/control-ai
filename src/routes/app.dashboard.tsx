@@ -26,17 +26,17 @@ function Dashboard() {
       const year = now.getFullYear();
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
       const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
-      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR, initialBalancesR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        // FIX: Include invoice_id in transaction query to properly aggregate credit card spending
-        supabase.from("transactions").select("*, categories(name, icon, color), accounts(type, name), invoices(id, account_id)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        // Include all transactions for proper calculation
+        supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
-        // FIX: Include invoice items in open invoices calculation
         supabase.from("invoices").select("*, accounts!inner(name, archived), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
         supabase.from("invoice_items").select("*"),
+        supabase.from("invoice_initial_balances").select("*"),
       ]);
       return {
         accounts: accR.data ?? [],
@@ -47,6 +47,7 @@ function Dashboard() {
         occs: occR.data ?? [],
         profile: profileR.data,
         invoiceItems: invoiceItemsR.data ?? [],
+        initialBalances: initialBalancesR.data ?? [],
       };
     },
     enabled: !!user,
@@ -58,7 +59,7 @@ function Dashboard() {
   const balance = income - expense;
   const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
 
-  // FIX: Properly calculate credit card expenses including all transactions linked to invoices
+  // Calculate credit card expenses properly
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
     (t.accounts?.type === "credit_card" || t.invoices?.id)
@@ -81,11 +82,12 @@ function Dashboard() {
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
-  // FIX: Calculate invoice totals including both transactions and invoice items
+  // Calculate invoice totals including transactions, items, and initial balances
   const invoiceItemsTotal = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
     const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
     const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-    return sum + txTotal + itemsTotal;
+    const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+    return sum + txTotal + itemsTotal + initialBalance;
   }, 0);
 
   // === PROJEÇÃO 3 MESES ===
@@ -112,7 +114,8 @@ function Dashboard() {
         .reduce((s, inv) => {
           const txTotal = (inv.transactions || []).reduce((sum: number, t: any) => sum + Number(t.amount), 0);
           const itemsTotal = (inv.invoice_items || []).reduce((sum: number, i: any) => sum + Number(i.amount), 0);
-          return s + txTotal + itemsTotal;
+          const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+          return s + txTotal + itemsTotal + initialBalance;
         }, 0);
       months.push({
         label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
@@ -220,10 +223,11 @@ function Dashboard() {
               const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
               const urgent = days >= 0 && days <= 5;
               const overdue = days < 0;
-              // FIX: Calculate total from both transactions and invoice_items
+              // Calculate total from transactions, items, and initial balance
               const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
               const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-              const total = txTotal + itemsTotal;
+              const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+              const total = txTotal + itemsTotal + initialBalance;
               return (
                 <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
                   <div className="min-w-0">
