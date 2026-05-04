@@ -1,6 +1,3 @@
-// Edge function: transfer_funds RPC
-// Handles fund transfers between banks with validation and error handling
-
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -20,7 +17,6 @@ Deno.serve(async (req) => {
     const userId = userData.user.id;
 
     const body = await req.json();
-    // Corrigido para usar os nomes exatos esperados no Postgres
     const { p_from_bank_id, p_to_bank_id, p_amount, p_description } = body;
 
     // Validação básica
