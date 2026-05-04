@@ -26,7 +26,7 @@ function ProfilesPage() {
   const { data: profile } = useQuery({
     queryKey: ["profile", user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle(); // Fixed type error
+      const { data } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
       return data;
     },
     enabled: !!user,
