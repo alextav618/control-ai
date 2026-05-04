@@ -99,7 +99,7 @@ function InsightsPage() {
       byCat[k] = byCat[k] ?? { name, total: 0 };
       byCat[k].total += Number(t.amount);
     });
-    const cats = Object.values(byCat).sort((a, b) => b.total - a.total);
+    const cats = Object.values(byCat).sort((a, b) => b.total - a.total).slice(0, 6);
     if (cats[0] && expense > 0 && cats[0].total / expense > 0.4) {
       out.push({
         level: "warning",

@@ -25,7 +25,11 @@ function Dashboard() {
       const month = now.getMonth() + 1;
       const year = now.getFullYear();
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
-      const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
+      
+      // FIX: Use localDateString for future limit to avoid -3h shift
+      const futureLimitDate = new Date(year, now.getMonth() + 4, 0);
+      const futureLimit = localDateString(futureLimitDate);
+
       const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR, initialBalancesR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
