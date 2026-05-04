@@ -1,5 +1,4 @@
 "use client";
-import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 /**
  * Initiates a fund transfer between two banks.
@@ -15,7 +14,7 @@ export async function transferFunds(
   amount: number,
   description?: string
 ) {
-  const { data, error } = await supabase.rpc("recompute_invoice_total", {
+  const { data, error } = await supabase.rpc("transfer_funds", {
     p_from_bank_id: fromBankId,
     p_to_bank_id: toBankId,
     p_amount: amount,
