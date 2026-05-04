@@ -89,10 +89,14 @@ function InvoicesPage() {
     if (!user || !payInv) return;
     if (!payAccount) { toast.error("Escolha a conta de pagamento"); return; }
 
+    // Calculate total including initial balance
+    const initialBalance = initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0;
+    const totalAmount = Number(payInv.total_amount) + initialBalance;
+
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "expense",
-      amount: Number(payInv.total_amount),
+      amount: totalAmount,
       description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
       occurred_on: payDate,
       account_id: payAccount,
@@ -103,7 +107,7 @@ function InvoicesPage() {
 
     const acc = accounts.find((a: any) => a.id === payAccount);
     if (acc) {
-      await supabase.from("accounts").update({ current_balance: Number(acc.current_balance) - Number(payInv.total_amount) }).eq("id", acc.id);
+      await supabase.from("accounts").update({ current_balance: Number(acc.current_balance) - totalAmount }).eq("id", acc.id);
     }
 
     const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
@@ -187,27 +191,21 @@ function InvoicesPage() {
 
     if (error) { toast.error(error.message); return; }
 
-    await recomputeInvoiceTotal(initialBalanceForm.invoice_id);
-    
+    // Note: initial_balance is NOT part of total_amount, it's added when displaying
     toast.success("Saldo inicial salvo");
     setInitialBalanceDialog(false);
     setInitialBalanceForm({ invoice_id: "", initial_balance: "" });
     qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
   const removeInitialBalance = async (invoiceId: string) => {
     const { error } = await supabase.from("invoice_initial_balances").delete().eq("invoice_id", invoiceId);
     if (error) { toast.error(error.message); return; }
 
-    await recomputeInvoiceTotal(invoiceId);
-    
     toast.success("Saldo inicial removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
-  };
-
-  const getInitialBalance = (invoiceId: string) => {
-    const balance = initialBalances.find((b: any) => b.invoice_id === invoiceId);
-    return balance ? balance.initial_balance : 0;
+    qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
   const open = invoices.filter((i: any) => i.status !== "paid");
@@ -225,7 +223,7 @@ function InvoicesPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} onSetInitialBalance={() => openInitialBalanceDialog(inv)} />)}
+            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} onSetInitialBalance={() => openInitialBalanceDialog(inv)} />)}
           </div>
         )}
       </section>
@@ -234,7 +232,7 @@ function InvoicesPage() {
         <section>
           <h2 className="font-display font-semibold mb-3 text-sm text-muted-foreground uppercase tracking-wide">Pagas</h2>
           <div className="space-y-2">
-            {paid.slice(0, 12).map((inv: any) => <InvCard key={inv.id} inv={inv} onReopen={() => reopen(inv)} />)}
+            {paid.slice(0, 12).map((inv: any) => <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} onReopen={() => reopen(inv)} />)}
           </div>
         </section>
       )}
@@ -246,7 +244,9 @@ function InvoicesPage() {
             <div className="space-y-4">
               <div className="rounded-lg bg-surface-2 p-4">
                 <div className="text-xs text-muted-foreground">{payInv.accounts?.name}</div>
-                <div className="font-mono tabular text-2xl font-bold mt-1">{formatBRL(Number(payInv.total_amount))}</div>
+                <div className="font-mono tabular text-2xl font-bold mt-1">
+                  {formatBRL(Number(payInv.total_amount) + (initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0))}
+                </div>
                 <div className="text-xs text-muted-foreground mt-1">vence {formatDateBR(payInv.due_date)}</div>
               </div>
               <div>
@@ -321,7 +321,14 @@ function InvoicesPage() {
   );
 }
 
-function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance }: { inv: any; onPay?: () => void; onReopen?: () => void; onAddItem?: () => void; onSetInitialBalance?: () => void }) {
+function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance, initialBalances }: { 
+  inv: any; 
+  onPay?: () => void; 
+  onReopen?: () => void; 
+  onAddItem?: () => void; 
+  onSetInitialBalance?: () => void;
+  initialBalances?: any[];
+}) {
   const due = new Date(inv.due_date);
   const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const overdue = inv.status !== "paid" && days < 0;
@@ -364,6 +371,10 @@ function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance }: { inv
     toast.success("Item removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
+
+  // Calculate total including initial balance
+  const initialBalance = initialBalances?.find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+  const total = Number(inv.total_amount) + initialBalance;
 
   return (
     <div className={cn(
@@ -420,7 +431,7 @@ function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance }: { inv
           )}
         </div>
       </div>
-      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap ml-2">{formatBRL(Number(inv.total_amount))}</div>
+      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap ml-2">{formatBRL(total)}</div>
       <div className="flex flex-col gap-1">
         {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1" />Pagar</Button>}
         {onReopen && <Button size="sm" variant="ghost" onClick={onReopen}>Reabrir</Button>}

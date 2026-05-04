@@ -31,7 +31,8 @@ function Dashboard() {
         // Include all transactions for proper calculation
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
-        supabase.from("invoices").select("*, accounts!inner(name, archived), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
+        // FIX: Now fetching transactions linked to invoices so totals calculate correctly
+        supabase.from("invoices").select("*, accounts!inner(name, archived), transactions(amount), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
