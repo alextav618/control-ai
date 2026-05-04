@@ -54,11 +54,11 @@ Justifique em audit_reason em 1 frase.
 - Parcelamentos ("12x de 200"): preencha installment.total_installments e installment.installment_amount.
 - Datas: hoje é padrão. Formato YYYY-MM-DD.`;
 
-function getAccountSummaryText(ctx: any): string {
+function getAccountSummaryText(ctx: any, localDate: string): string {
   if (!ctx) return "";
   const lines: string[] = [];
   lines.push("=== CONTEXTO DO USUÁRIO ===");
-  lines.push(`Data de hoje: ${new Date().toISOString().slice(0, 10)}`);
+  lines.push(`Data de hoje (local): ${localDate}`);
   if (ctx.profile?.display_name) lines.push(`Usuário: ${ctx.profile.display_name}`);
   if (ctx.profile?.monthly_budget) lines.push(`Orçamento mensal: R$ ${ctx.profile.monthly_budget}`);
 
@@ -191,13 +191,17 @@ Deno.serve(async (req) => {
     const userId = userData.user.id;
 
     const body = await req.json();
-    const { text, imageBase64, audioBase64, audioMime, history } = body as {
+    const { text, imageBase64, audioBase64, audioMime, history, localDate } = body as {
       text?: string;
       imageBase64?: string;
       audioBase64?: string;
       audioMime?: string;
       history?: Array<{ role: "user" | "assistant"; content: string }>;
+      localDate?: string;
     };
+
+    // FIX: Use provided localDate or fallback to UTC (but localDate is preferred)
+    const today = localDate || new Date().toISOString().slice(0, 10);
 
     // Buscar contexto financeiro
     const [accountsR, categoriesR, billsR, profileR, txR] = await Promise.all([
@@ -208,8 +212,7 @@ Deno.serve(async (req) => {
       supabase.from("transactions").select("*").order("occurred_on", { ascending: false }).limit(20),
     ]);
 
-    const now = new Date();
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+    const monthStart = `${today.slice(0, 7)}-01`;
     const monthTx = (txR.data ?? []).filter((t: any) => t.occurred_on >= monthStart);
     const income = monthTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
     const expense = monthTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
@@ -238,7 +241,7 @@ Deno.serve(async (req) => {
     }
 
     const messages = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx)}` },
+      { role: "system", content: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx, today)}` },
       ...((history ?? []).slice(-10).map((m) => ({ role: m.role, content: m.content }))),
       { role: "user", content: userParts.length ? userParts : (text ?? "") },
     ];
@@ -279,13 +282,13 @@ Deno.serve(async (req) => {
       try { args = JSON.parse(call.function?.arguments ?? "{}"); } catch { /* ignore */ }
 
       if (fnName === "register_transaction") {
-        const action = await handleTransaction(supabase, userId, args, ctx);
+        const action = await handleTransaction(supabase, userId, args, ctx, today);
         actions.push(action);
       } else if (fnName === "register_entity") {
         const action = await handleEntity(supabase, userId, args);
         actions.push(action);
       } else if (fnName === "query_spending") {
-        const result = await handleQuerySpending(supabase, userId, args, ctx);
+        const result = await handleQuerySpending(supabase, userId, args, ctx, today);
         toolResults.push({ tool_call_id: call.id, name: fnName, result });
         actions.push({ type: "query", query: args, result });
       }
@@ -330,20 +333,29 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
   if (!account || account.type !== "credit_card") return null;
   const closingDay = account.closing_day ?? 1;
   const dueDay = account.due_day ?? closingDay;
+  
+  // FIX: Use local date logic for invoice window
   const occ = new Date(occurredOn + "T12:00:00Z");
-  // Se occurred_on > closing_day → fatura do mês seguinte
   const occDay = occ.getUTCDate();
   let refMonth = occ.getUTCMonth() + 1;
   let refYear = occ.getUTCFullYear();
+  
   if (occDay > closingDay) {
     refMonth += 1;
     if (refMonth > 12) { refMonth = 1; refYear += 1; }
   }
+  
   // Closing/due dates da fatura
   const closingMonthIdx = refMonth - 1; // 0-based
   const closingDate = new Date(Date.UTC(refYear, closingMonthIdx, Math.min(closingDay, 28)));
-  const dueDate = new Date(Date.UTC(refYear, closingMonthIdx, Math.min(dueDay, 28)));
-  if (dueDay < closingDay) dueDate.setUTCMonth(dueDate.getUTCMonth() + 1);
+  
+  let dueYear = refYear;
+  let dueMonth = refMonth;
+  if (dueDay <= closingDay) {
+    dueMonth += 1;
+    if (dueMonth > 12) { dueMonth = 1; dueYear += 1; }
+  }
+  const dueDate = new Date(Date.UTC(dueYear, dueMonth - 1, Math.min(dueDay, 28)));
 
   const { data: existing } = await supabase
     .from("invoices")
@@ -368,12 +380,12 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
   return created;
 }
 
-async function handleTransaction(supabase: any, userId: string, args: any, ctx: any) {
-  const occurred = args.occurred_on || new Date().toISOString().slice(0, 10);
+async function handleTransaction(supabase: any, userId: string, args: any, ctx: any, today: string) {
+  const occurred = args.occurred_on || today;
   const account = ctx.accounts.find((a: any) => a.id === args.account_id);
   const isCard = account?.type === "credit_card";
 
-  // Parcelamento → cria plano + N transações (uma por parcela), cada uma vinculada à fatura do mês correspondente
+  // Parcelamento → cria plano + N transações (uma por parcela)
   const totalInst = Number(args.installment?.total_installments ?? 0);
   if (totalInst > 1) {
     const instAmount = Number(args.installment.installment_amount);
@@ -431,6 +443,13 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       console.error("tx batch insert error", txErr);
       return { type: "error", message: txErr.message };
     }
+    
+    // Recompute all affected invoices
+    const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
+    for (const invId of invoiceIds) {
+      await recomputeInvoiceTotal(supabase, invId);
+    }
+
     await supabase.from("audit_log").insert({
       user_id: userId,
       transaction_id: txs?.[0]?.id ?? null,
@@ -442,7 +461,7 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     return { type: "transaction", transaction: txs?.[0], invoice: firstInvoice };
   }
 
-  // Transação simples - CRITICAL FIX: Always link credit card transactions to invoices
+  // Transação simples
   const invoice = isCard ? await ensureInvoice(supabase, userId, account, occurred) : null;
   const { data: tx, error: txErr } = await supabase
     .from("transactions")
@@ -455,7 +474,7 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       account_id: account?.id ?? null,
       category_id: args.category_id ?? null,
       fixed_bill_id: args.fixed_bill_id ?? null,
-      invoice_id: invoice?.id ?? null,  // This ensures credit card tx are linked to invoices
+      invoice_id: invoice?.id ?? null,
       audit_level: args.audit_level ?? null,
       audit_reason: args.audit_reason ?? null,
       source: "chat",
@@ -478,7 +497,6 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     data: args,
   });
 
-  // Recompute invoice total immediately after transaction
   if (invoice?.id) {
     await recomputeInvoiceTotal(supabase, invoice.id);
   }
@@ -524,20 +542,20 @@ async function handleEntity(supabase: any, userId: string, args: any) {
   return { type: "error", message: "Entidade desconhecida" };
 }
 
-function resolvePeriod(period?: string): { from?: string; to?: string } {
+function resolvePeriod(period: string | undefined, today: string): { from?: string; to?: string } {
   if (!period) return {};
-  const now = new Date();
+  const now = new Date(today + "T12:00:00Z");
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth();
   const d = now.getUTCDate();
   const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+  
   if (period === "today") {
-    const t = fmt(new Date(Date.UTC(y, m, d)));
-    return { from: t, to: t };
+    return { from: today, to: today };
   }
   if (period === "week") {
     const start = new Date(Date.UTC(y, m, d - 6));
-    return { from: fmt(start), to: fmt(new Date(Date.UTC(y, m, d))) };
+    return { from: fmt(start), to: today };
   }
   if (period === "month") {
     return { from: fmt(new Date(Date.UTC(y, m, 1))), to: fmt(new Date(Date.UTC(y, m + 1, 0))) };
@@ -551,8 +569,8 @@ function resolvePeriod(period?: string): { from?: string; to?: string } {
   return {};
 }
 
-async function handleQuerySpending(supabase: any, _userId: string, args: any, ctx: any) {
-  const { from: pf, to: pt } = resolvePeriod(args.period);
+async function handleQuerySpending(supabase: any, _userId: string, args: any, ctx: any, today: string) {
+  const { from: pf, to: pt } = resolvePeriod(args.period, today);
   const dateFrom = pf || args.date_from;
   const dateTo = pt || args.date_to;
 

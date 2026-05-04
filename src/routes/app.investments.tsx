@@ -3,7 +3,7 @@ import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, formatDateBR } from "@/lib/format";
+import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -388,8 +388,8 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
   const qc = useQueryClient();
   const [openMov, setOpenMov] = useState(false);
   const [openSnap, setOpenSnap] = useState(false);
-  const [movForm, setMovForm] = useState({ type: "deposit", amount: "", occurred_on: new Date().toISOString().slice(0, 10), notes: "" });
-  const [snapForm, setSnapForm] = useState({ market_value: "", snapshot_date: new Date().toISOString().slice(0, 10) });
+  const [movForm, setMovForm] = useState({ type: "deposit", amount: "", occurred_on: localDateString(), notes: "" });
+  const [snapForm, setSnapForm] = useState({ market_value: "", snapshot_date: localDateString() });
 
   const { data: movements = [] } = useQuery({
     queryKey: ["movements", asset.id],
@@ -430,7 +430,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
     if (error) return toast.error(error.message);
     toast.success("Movimentação registrada");
     setOpenMov(false);
-    setMovForm({ type: "deposit", amount: "", occurred_on: new Date().toISOString().slice(0, 10), notes: "" });
+    setMovForm({ type: "deposit", amount: "", occurred_on: localDateString(), notes: "" });
     qc.invalidateQueries({ queryKey: ["movements", asset.id] });
     qc.invalidateQueries({ queryKey: ["all_movements"] });
   };
@@ -445,7 +445,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
     if (error) return toast.error(error.message);
     toast.success("Posição atualizada");
     setOpenSnap(false);
-    setSnapForm({ market_value: "", snapshot_date: new Date().toISOString().slice(0, 10) });
+    setSnapForm({ market_value: "", snapshot_date: localDateString() });
     qc.invalidateQueries({ queryKey: ["snapshots", asset.id] });
     qc.invalidateQueries({ queryKey: ["all_snapshots"] });
   };

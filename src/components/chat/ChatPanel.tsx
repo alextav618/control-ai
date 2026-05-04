@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Mic, Send, Image as ImageIcon, Loader2, X, Square } from "lucide-react";
 import { toast } from "sonner";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, localDateString } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Msg = {
@@ -156,7 +156,14 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
       const { data, error } = await supabase.functions.invoke("chat-ai", {
-        body: { text: text.trim() || undefined, imageBase64, audioBase64, audioMime, history },
+        body: { 
+          text: text.trim() || undefined, 
+          imageBase64, 
+          audioBase64, 
+          audioMime, 
+          history,
+          localDate: localDateString() // FIX: Send local date to AI
+        },
       });
 
       if (error) {
