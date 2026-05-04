@@ -6,7 +6,7 @@ export function useBanks() {
   return useQuery({
     queryKey: ["banks"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from("banks")
         .select("id, name")
         .order("name", { ascending: true });
