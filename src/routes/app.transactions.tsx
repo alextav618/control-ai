@@ -47,19 +47,7 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   };
 }
 
-/** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
-const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
-  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-  
-  // Sum invoice items
-  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
-  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-  
-  const total = txTotal + itemsTotal;
-  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
-};
+// Recálculo da fatura é feito automaticamente pelo trigger trg_transactions_invoice_recompute no Postgres.
 
 function TxPage() {
   const { user } = useAuth();
