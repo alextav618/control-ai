@@ -1,3 +1,4 @@
+import { createFileRoute } from '@tanstack/react-router'
 "use client";
 
 import { useState, useEffect } from "react";
