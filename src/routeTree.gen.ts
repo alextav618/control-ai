@@ -22,6 +22,7 @@ import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
 import { Route as AppCategoriesRouteImport } from './routes/app.categories'
 import { Route as AppBillsRouteImport } from './routes/app.bills'
 import { Route as AppAccountsRouteImport } from './routes/app.accounts'
+import { Route as AppGoalsRouteImport } from './routes/app.goals'
 import { Route as ApiPublicHooksUpdateRatesRouteImport } from './routes/api/public/hooks/update-rates'
 
 const AuthRoute = AuthRouteImport.update({
@@ -89,6 +90,11 @@ const AppAccountsRoute = AppAccountsRouteImport.update({
   path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGoalsRoute = AppGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiPublicHooksUpdateRatesRoute =
   ApiPublicHooksUpdateRatesRouteImport.update({
     id: '/api/public/hooks/update-rates',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
+  '/app/goals': typeof AppGoalsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
+  '/app/goals': typeof AppGoalsRoute
   '/app': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -141,6 +149,7 @@ export interface FileRoutesById {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
+  '/app/goals': typeof AppGoalsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -159,6 +168,7 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
+    | '/app/goals'
     | '/app/'
     | '/api/public/hooks/update-rates'
   fileRoutesByTo: FileRoutesByTo
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
+    | '/app/goals'
     | '/app'
     | '/api/public/hooks/update-rates'
   id:
@@ -190,6 +201,7 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
+    | '/app/goals'
     | '/app/'
     | '/api/public/hooks/update-rates'
   fileRoutesById: FileRoutesById
@@ -294,6 +306,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/goals': {
+      id: '/app/goals'
+      path: '/goals'
+      fullPath: '/app/goals'
+      preLoaderRoute: typeof AppGoalsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/public/hooks/update-rates': {
       id: '/api/public/hooks/update-rates'
       path: '/api/public/hooks/update-rates'
@@ -314,6 +333,7 @@ interface AppRouteChildren {
   AppInvoicesRoute: typeof AppInvoicesRoute
   AppProfilesRoute: typeof AppProfilesRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
+  AppGoalsRoute: typeof AppGoalsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -327,6 +347,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppInvoicesRoute: AppInvoicesRoute,
   AppProfilesRoute: AppProfilesRoute,
   AppTransactionsRoute: AppTransactionsRoute,
+  AppGoalsRoute: AppGoalsRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
