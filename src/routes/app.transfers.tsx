@@ -12,7 +12,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useNavigate } from "@tanstack/react-router";
 import { Loader2 } from "lucide-react";
 
-export const Route = createFileRoute("/transfers")({ component: TransfersPage });
+export const Route = createFileRoute("/app/transfers")({ component: TransfersPage });
 
 function TransfersPage() {
   const { data: banks = [] } = useQuery({
@@ -57,6 +57,7 @@ function TransfersPage() {
         setDescription("");
         setFromBank(null);
         setToBank(null);
+        navigate("/app");
       }, 1500);
     } catch (err: any) {
       setError(err.message ?? "Erro inesperado.");
