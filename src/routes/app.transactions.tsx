@@ -231,18 +231,15 @@ function TxPage() {
 
     const { error } = await supabase.from("transactions").insert(rows as any);
     if (error) { toast.error(error.message); return; }
-    
-    // After inserting transactions, update invoice totals for all affected invoices
-    const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-    for (const invId of invoiceIds) {
-      await recomputeInvoiceTotal(invId);
-    }
-    
+
+    // Totais das faturas são recalculados automaticamente pelo trigger no Postgres.
     toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+  };
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
