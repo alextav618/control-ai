@@ -11,6 +11,7 @@ export function useBanks() {
         .select("id, name")
         .order("name", { ascending: true });
       if (error) throw error;
+      // Garante que o tipo seja exatamente o que esperamos
       return data as Array<{ id: string; name: string }>;
     },
     staleTime: 60 * 60 * 1000, // 1 hour
