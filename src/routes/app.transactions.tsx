@@ -312,7 +312,7 @@ function TxPage() {
                   💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
                 </p>
               )}
-              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
+              <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : (editId ? "Salvar alterações" : "Lançar")}</Button>
             </div>
           </DialogContent>
         </Dialog>
