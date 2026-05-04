@@ -118,20 +118,13 @@ function TxPage() {
   });
 
   const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
-    const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
-    const invoiceId = tx?.invoice_id;
-    
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) toast.error(error.message);
-    else { 
-      // Recompute invoice total if this transaction was linked to an invoice
-      if (invoiceId) {
-        await recomputeInvoiceTotal(invoiceId);
-      }
-      toast.success("Removido"); 
-      qc.invalidateQueries({ queryKey: ["transactions"] }); 
-      qc.invalidateQueries({ queryKey: ["dashboard"] }); 
+    else {
+      toast.success("Removido");
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     }
   };
 
