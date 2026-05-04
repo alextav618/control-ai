@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, monthNames } from "@/lib/format";
+import { formatBRL, monthNames, localDateString } from "@/lib/format";
 import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
@@ -28,10 +28,9 @@ function Dashboard() {
       const futureLimit = new Date(year, now.getMonth() + 4, 0).toISOString().slice(0, 10);
       const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR, initialBalancesR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        // Include all transactions for proper calculation
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
-        supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", new Date().toISOString().slice(0, 10)).lte("occurred_on", futureLimit),
-        // FIX: Now fetching transactions linked to invoices so totals calculate correctly
+        supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
+        // Fetch transactions linked to invoices
         supabase.from("invoices").select("*, accounts!inner(name, archived), transactions(amount), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
@@ -60,7 +59,6 @@ function Dashboard() {
   const balance = income - expense;
   const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
 
-  // Calculate credit card expenses properly
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
     (t.accounts?.type === "credit_card" || t.invoices?.id)
@@ -103,14 +101,14 @@ function Dashboard() {
       const recurring = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
       const installments = (data.futureTx as any[])
         .filter((t) => {
-          const td = new Date(t.occurred_on);
+          const td = new Date(t.occurred_on + "T12:00:00");
           return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
         })
         .reduce((s, t) => s + Number(t.amount), 0);
+      // FIX: Use reference_month and reference_year from invoice, not due_date
       const invoices = (data.openInvoices as any[])
         .filter((inv) => {
-          const dd = new Date(inv.due_date);
-          return dd.getMonth() + 1 === m && dd.getFullYear() === y;
+          return inv.reference_month === m && inv.reference_year === y;
         })
         .reduce((s, inv) => {
           const txTotal = (inv.transactions || []).reduce((sum: number, t: any) => sum + Number(t.amount), 0);
@@ -201,9 +199,9 @@ function Dashboard() {
               <div className="text-xs text-muted-foreground capitalize">{p.label}</div>
               <div className="font-mono tabular text-lg md:text-xl font-bold mt-1">{formatBRL(p.total)}</div>
               <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden flex">
-                <div className="h-full bg-audit-yellow" style={{ width: `${(p.recurring / maxProj) * 100}%` }} />
-                <div className="h-full bg-expense" style={{ width: `${(p.invoices / maxProj) * 100}%` }} />
-                <div className="h-full bg-primary" style={{ width: `${(p.installments / maxProj) * 100}%` }} />
+                <div className="h-full bg-audit-yellow" style={{ width: `${(p.recurring / Math.max(1, p.total)) * 100}%` }} />
+                <div className="h-full bg-expense" style={{ width: `${(p.invoices / Math.max(1, p.total)) * 100}%` }} />
+                <div className="h-full bg-primary" style={{ width: `${(p.installments / Math.max(1, p.total)) * 100}%` }} />
               </div>
               <div className="mt-2 space-y-0.5 text-[10px] md:text-xs text-muted-foreground">
                 <div className="flex justify-between"><span>● Recorrentes</span><span className="font-mono">{formatBRL(p.recurring)}</span></div>
@@ -220,11 +218,11 @@ function Dashboard() {
           {data?.openInvoices.length === 0 && <Empty>Sem faturas em aberto.</Empty>}
           <div className="space-y-2">
             {data?.openInvoices.map((inv: any) => {
-              const due = new Date(inv.due_date);
+              // Use reference_month/year for correct month display
+              const due = new Date(inv.due_date + "T12:00:00");
               const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
               const urgent = days >= 0 && days <= 5;
               const overdue = days < 0;
-              // Calculate total from transactions, items, and initial balance
               const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
               const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
               const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
@@ -238,7 +236,7 @@ function Dashboard() {
                       {urgent && !overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      vence {new Date(inv.due_date).toLocaleDateString("pt-BR")}
+                      vence {new Date(inv.due_date + "T12:00:00").toLocaleDateString("pt-BR")}
                     </div>
                   </div>
                   <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(total)}</div>

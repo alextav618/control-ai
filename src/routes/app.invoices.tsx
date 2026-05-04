@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, formatDateBR, monthNames } from "@/lib/format";
+import { formatBRL, formatDateBR, monthNames, localDateString } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,7 @@ function InvoicesPage() {
   const qc = useQueryClient();
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
-  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [payDate, setPayDate] = useState(localDateString());
   const [itemDialog, setItemDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
@@ -48,7 +48,8 @@ function InvoicesPage() {
         .from("invoices")
         .select("*, accounts!inner(name, type, archived)")
         .eq("accounts.archived", false)
-        .order("due_date", { ascending: false });
+        .order("reference_year", { ascending: false })
+        .order("reference_month", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -82,14 +83,13 @@ function InvoicesPage() {
   const openPay = (inv: any) => {
     setPayInv(inv);
     setPayAccount(cashAccounts[0]?.id ?? "");
-    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayDate(localDateString());
   };
 
   const confirmPay = async () => {
     if (!user || !payInv) return;
     if (!payAccount) { toast.error("Escolha a conta de pagamento"); return; }
 
-    // Calculate total including initial balance
     const initialBalance = initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0;
     const totalAmount = Number(payInv.total_amount) + initialBalance;
 
@@ -191,7 +191,8 @@ function InvoicesPage() {
 
     if (error) { toast.error(error.message); return; }
 
-    // Note: initial_balance is NOT part of total_amount, it's added when displaying
+    await recomputeInvoiceTotal(initialBalanceForm.invoice_id);
+    
     toast.success("Saldo inicial salvo");
     setInitialBalanceDialog(false);
     setInitialBalanceForm({ invoice_id: "", initial_balance: "" });
@@ -203,6 +204,8 @@ function InvoicesPage() {
     const { error } = await supabase.from("invoice_initial_balances").delete().eq("invoice_id", invoiceId);
     if (error) { toast.error(error.message); return; }
 
+    await recomputeInvoiceTotal(invoiceId);
+    
     toast.success("Saldo inicial removido");
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
@@ -247,7 +250,9 @@ function InvoicesPage() {
                 <div className="font-mono tabular text-2xl font-bold mt-1">
                   {formatBRL(Number(payInv.total_amount) + (initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0))}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">vence {formatDateBR(payInv.due_date)}</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {monthNames[payInv.reference_month - 1]}/{payInv.reference_year} · vence {formatDateBR(payInv.due_date)}
+                </div>
               </div>
               <div>
                 <Label>Pagar com</Label>
@@ -329,7 +334,8 @@ function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance, initial
   onSetInitialBalance?: () => void;
   initialBalances?: any[];
 }) {
-  const due = new Date(inv.due_date);
+  // Use reference_month and reference_year for correct month calculation
+  const due = new Date(inv.due_date + "T12:00:00");
   const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   const overdue = inv.status !== "paid" && days < 0;
   const urgent = inv.status !== "paid" && days >= 0 && days <= 5;

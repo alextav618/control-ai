@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, formatDateBR } from "@/lib/format";
+import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
 import { Trash2, Plus, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,43 +17,50 @@ export const Route = createFileRoute("/app/transactions")({
   component: TxPage,
 });
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function todayLocal() {
+  return localDateString();
 }
 
 /** Calculates the invoice (reference month/year, closing and due dates) for a purchase on a credit card. */
 function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   const day = purchase.getDate();
-  let m = purchase.getMonth() + 1; // 1..12
-  let y = purchase.getFullYear();
+  const month = purchase.getMonth(); // 0-11
+  const year = purchase.getFullYear();
+  
   // If purchase is after closing, it goes to next invoice
+  let refMonth = month + 1; // 1-12
+  let refYear = year;
+  
   if (day > closingDay) {
-    m += 1;
-    if (m > 12) { m = 1; y += 1; }
+    refMonth += 1;
+    if (refMonth > 12) { refMonth = 1; refYear += 1; }
   }
-  const safeClosing = Math.min(closingDay, 28);
-  const safeDue = Math.min(dueDay, 28);
-  const closingDate = new Date(y, m - 1, safeClosing);
+  
+  // Closing date (in local time)
+  const closingDate = new Date(refYear, refMonth - 1, Math.min(closingDay, 28));
+  
   // Due date: if due_day < closing_day, it's usually next month
-  let dueY = y, dueM = m;
-  if (dueDay <= closingDay) { dueM += 1; if (dueM > 12) { dueM = 1; dueY += 1; } }
-  const dueDate = new Date(dueY, dueM - 1, safeDue);
+  let dueYear = refYear;
+  let dueMonth = refMonth;
+  if (dueDay <= closingDay) { 
+    dueMonth += 1; 
+    if (dueMonth > 12) { dueMonth = 1; dueYear += 1; } 
+  }
+  const dueDate = new Date(dueYear, dueMonth - 1, Math.min(dueDay, 28));
+  
   return {
-    referenceMonth: m,
-    referenceYear: y,
-    closingDate: `${closingDate.getFullYear()}-${String(closingDate.getMonth() + 1).padStart(2, "0")}-${String(closingDate.getDate()).padStart(2, "0")}`,
-    dueDate: `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, "0")}-${String(dueDate.getDate()).padStart(2, "0")}`,
+    referenceMonth: refMonth,
+    referenceYear: refYear,
+    closingDate: localDateString(closingDate),
+    dueDate: localDateString(dueDate),
   };
 }
 
 /** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions linked to this invoice
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
-  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
   
@@ -70,14 +77,14 @@ function TxPage() {
     type: "expense",
     description: "",
     amount: "",
-    occurred_on: todayISO(),
+    occurred_on: todayLocal(),
     account_id: "",
     category_id: "",
     installments: "1",
   });
 
   const resetForm = () => {
-    setForm({ type: "expense", description: "", amount: "", occurred_on: todayISO(), account_id: "", category_id: "", installments: "1" });
+    setForm({ type: "expense", description: "", amount: "", occurred_on: todayLocal(), account_id: "", category_id: "", installments: "1" });
     setEditId(null);
   };
 
@@ -130,14 +137,12 @@ function TxPage() {
   });
 
   const remove = async (id: string) => {
-    // Get the transaction first to find its invoice_id
     const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
     const invoiceId = tx?.invoice_id;
     
     const { error } = await supabase.from("transactions").delete().eq("id", id);
     if (error) toast.error(error.message);
     else { 
-      // Recompute invoice total if this transaction was linked to an invoice
       if (invoiceId) {
         await recomputeInvoiceTotal(invoiceId);
       }
@@ -178,7 +183,6 @@ function TxPage() {
       return;
     }
 
-    // === EDIÇÃO ===
     if (editId) {
       const { error } = await supabase.from("transactions").update({
         type: form.type as any,
@@ -220,17 +224,16 @@ function TxPage() {
       installmentPlanId = plan.id;
     }
 
-    const baseDate = new Date(form.occurred_on + "T12:00:00Z");
+    const baseDate = new Date(form.occurred_on + "T12:00:00");
     const rows: any[] = [];
     for (let i = 0; i < installments; i++) {
-      const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
-      const occ_i = d.toISOString().slice(0, 10);
+      const d = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
       let invoiceId: string | null = null;
       if (isCard) {
         const inv = await ensureInvoice(account, d);
         invoiceId = inv?.id ?? null;
       }
-      const occurred = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const occurred = localDateString(d);
       rows.push({
         user_id: user.id,
         type: form.type,
@@ -251,7 +254,6 @@ function TxPage() {
     const { error } = await supabase.from("transactions").insert(rows as any);
     if (error) { toast.error(error.message); return; }
     
-    // After inserting transactions, update invoice totals for all affected invoices
     const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
     for (const invId of invoiceIds) {
       await recomputeInvoiceTotal(invId);
