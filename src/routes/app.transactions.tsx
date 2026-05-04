@@ -155,10 +155,13 @@ function TxPage() {
   };
 
   const submit = async () => {
+    if (submitting) return; // previne duplo submit
     if (!user || !form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+    setSubmitting(true);
+    try {
 
     // === EDIÇÃO ===
     if (editId) {
