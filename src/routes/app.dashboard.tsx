@@ -4,11 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import SpendingChart from "@/components/dashboard/SpendingChart";
 
 export const Route = createFileRoute("/app/dashboard")({
   component: Dashboard,
@@ -26,21 +27,21 @@ function Dashboard() {
       const year = now.getFullYear();
       const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
       
-      // FIX: Use localDateString for future limit to avoid -3h shift
       const futureLimitDate = new Date(year, now.getMonth() + 4, 0);
       const futureLimit = localDateString(futureLimitDate);
 
-      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, invoiceItemsR, initialBalancesR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
-        // Fetch transactions linked to invoices
         supabase.from("invoices").select("*, accounts!inner(name, archived), transactions(amount), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
-        supabase.from("invoice_items").select("*"),
         supabase.from("invoice_initial_balances").select("*"),
+        supabase.from("investment_assets").select("*").eq("archived", false),
+        supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false }),
+        supabase.from("investment_movements").select("*"),
       ]);
       return {
         accounts: accR.data ?? [],
@@ -50,8 +51,10 @@ function Dashboard() {
         bills: billsR.data ?? [],
         occs: occR.data ?? [],
         profile: profileR.data,
-        invoiceItems: invoiceItemsR.data ?? [],
         initialBalances: initialBalancesR.data ?? [],
+        assets: assetsR.data ?? [],
+        snapshots: snapsR.data ?? [],
+        movements: movR.data ?? [],
       };
     },
     enabled: !!user,
@@ -61,7 +64,42 @@ function Dashboard() {
   const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
-  const totalCashBalance = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card").reduce((s: number, a: any) => s + Number(a.current_balance), 0);
+  
+  const cashAccounts = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card");
+  const totalCashBalance = cashAccounts.reduce((s: number, a: any) => s + Number(a.current_balance), 0);
+
+  // Calculate Investment Portfolio Value
+  const portfolioValue = useMemo(() => {
+    if (!data) return 0;
+    let total = 0;
+    for (const a of data.assets) {
+      const lastSnap = data.snapshots.find((s: any) => s.asset_id === a.id);
+      if (lastSnap) {
+        total += Number(lastSnap.market_value);
+      } else {
+        const movs = data.movements.filter((m: any) => m.asset_id === a.id);
+        const net = movs.reduce((s: number, m: any) => {
+          if (m.type === "deposit") return s + Number(m.amount);
+          if (m.type === "withdrawal") return s - Number(m.amount);
+          if (m.type === "interest" || m.type === "dividend") return s + Number(m.amount);
+          if (m.type === "fee" || m.type === "tax") return s - Number(m.amount);
+          return s;
+        }, 0);
+        total += net;
+      }
+    }
+    return total;
+  }, [data]);
+
+  // Calculate Credit Card Debt (Open Invoices)
+  const totalCardDebt = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
+    const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
+    const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
+    const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+    return sum + txTotal + itemsTotal + initialBalance;
+  }, 0);
+
+  const netWorth = totalCashBalance + portfolioValue - totalCardDebt;
 
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
@@ -85,14 +123,6 @@ function Dashboard() {
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
-  // Calculate invoice totals including transactions, items, and initial balances
-  const invoiceItemsTotal = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
-    const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
-    const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-    const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-    return sum + txTotal + itemsTotal + initialBalance;
-  }, 0);
-
   // === PROJEÇÃO 3 MESES ===
   const projection = useMemo(() => {
     if (!data) return [];
@@ -109,11 +139,8 @@ function Dashboard() {
           return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
         })
         .reduce((s, t) => s + Number(t.amount), 0);
-      // FIX: Use reference_month and reference_year from invoice, not due_date
       const invoices = (data.openInvoices as any[])
-        .filter((inv) => {
-          return inv.reference_month === m && inv.reference_year === y;
-        })
+        .filter((inv) => inv.reference_month === m && inv.reference_year === y)
         .reduce((s, inv) => {
           const txTotal = (inv.transactions || []).reduce((sum: number, t: any) => sum + Number(t.amount), 0);
           const itemsTotal = (inv.invoice_items || []).reduce((sum: number, i: any) => sum + Number(i.amount), 0);
@@ -133,16 +160,25 @@ function Dashboard() {
     return months;
   }, [data]);
 
-  const maxProj = Math.max(1, ...projection.map((p) => p.total));
-
   const now = new Date();
   const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
-      <div>
-        <h1 className="font-display text-2xl md:text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground text-sm mt-1">{monthLabel}</p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="font-display text-2xl md:text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground text-sm mt-1">{monthLabel}</p>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface-1 px-4 py-2 shadow-card flex items-center gap-3">
+          <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+            <Landmark className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Patrimônio Líquido</div>
+            <div className="font-mono font-bold text-lg tabular">{formatBRL(netWorth)}</div>
+          </div>
+        </div>
       </div>
 
       {/* Chat trigger */}
@@ -187,11 +223,18 @@ function Dashboard() {
         <Kpi label="Resultado" value={formatBRL(balance)} accent={balance >= 0 ? "income" : "expense"} />
       </div>
 
-      {/* Despesas por origem */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-        <BreakdownCard label="Despesas fixas" value={fixedExpense} total={expense} color="bg-audit-yellow" />
-        <BreakdownCard label="Despesas variáveis" value={variableExpense} total={expense} color="bg-primary" />
-        <BreakdownCard label="Cartão de crédito" value={cardExpense} total={expense} color="bg-expense" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Chart Section */}
+        <Card title="Gastos por categoria" className="lg:col-span-2">
+          <SpendingChart data={catList.map(c => ({ name: c.name, total: c.total }))} />
+        </Card>
+
+        {/* Breakdown Section */}
+        <div className="space-y-4">
+          <BreakdownCard label="Despesas fixas" value={fixedExpense} total={expense} color="bg-audit-yellow" />
+          <BreakdownCard label="Despesas variáveis" value={variableExpense} total={expense} color="bg-primary" />
+          <BreakdownCard label="Cartão de crédito" value={cardExpense} total={expense} color="bg-expense" />
+        </div>
       </div>
 
       {/* PROJEÇÃO 3 MESES */}
@@ -222,7 +265,6 @@ function Dashboard() {
           {data?.openInvoices.length === 0 && <Empty>Sem faturas em aberto.</Empty>}
           <div className="space-y-2">
             {data?.openInvoices.map((inv: any) => {
-              // Use reference_month/year for correct month display
               const due = new Date(inv.due_date + "T12:00:00");
               const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
               const urgent = days >= 0 && days <= 5;
@@ -274,23 +316,6 @@ function Dashboard() {
                 </div>
               );
             })}
-          </div>
-        </Card>
-
-        <Card title="Gastos por categoria" className="md:col-span-2">
-          {catList.length === 0 && <Empty>Sem gastos neste mês.</Empty>}
-          <div className="space-y-3">
-            {catList.map((c) => (
-              <div key={c.name}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span>{c.icon} {c.name}</span>
-                  <span className="font-mono tabular">{formatBRL(c.total)}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
-                  <div className="h-full bg-gradient-primary rounded-full transition-all" style={{ width: `${(c.total / maxCat) * 100}%` }} />
-                </div>
-              </div>
-            ))}
           </div>
         </Card>
       </div>
