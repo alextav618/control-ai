@@ -115,7 +115,6 @@ function TxPage() {
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
 
-  // Simplificando a query para evitar conflitos de RLS/estrutura
   const { data: tx = [], isLoading: txLoading } = useQuery({
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
@@ -128,13 +127,12 @@ function TxPage() {
         .limit(200);
       if (error) {
         console.error("Error fetching transactions:", error);
-        // Não lança toast aqui para evitar tela branca em caso de erro inicial
-        return []; // Retorna array vazio para evitar tela branca
+        toast.error("Erro ao carregar lançamentos");
+        return [];
       }
       return data;
     },
     enabled: !!user,
-    retry: false, // Desabilita retries automáticas para evitar loops em caso de erro persistente
   });
 
   const { data: accounts = [], isLoading: accLoading } = useQuery({
@@ -144,13 +142,12 @@ function TxPage() {
       const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
       if (error) {
         console.error("Error fetching accounts:", error);
-        // Não lança toast aqui para evitar tela branca
-        return []; // Retorna array vazio para evitar tela branca
+        toast.error("Erro ao carregar contas");
+        return [];
       }
       return data ?? [];
     },
     enabled: !!user,
-    retry: false,
   });
 
   const { data: cats = [], isLoading: catLoading } = useQuery({
@@ -160,13 +157,12 @@ function TxPage() {
       const { data, error } = await supabase.from("categories").select("*");
       if (error) {
         console.error("Error fetching categories:", error);
-        // Não lança toast aqui para evitar tela branca
-        return []; // Retorna array vazio para evitar tela branca
+        toast.error("Erro ao carregar categorias");
+        return [];
       }
       return data ?? [];
     },
     enabled: !!user,
-    retry: false,
   });
 
   const remove = async (id: string) => {
@@ -219,7 +215,14 @@ function TxPage() {
   };
 
   const submit = async () => {
-    if (!user || !form.description || !form.amount || !form.account_id) {
+    // Verifica se o usuário está logado antes de prosseguir
+    if (!user) {
+      console.error("User not logged in. Cannot submit transaction.");
+      toast.error("Você precisa estar logado para adicionar lançamentos.");
+      return;
+    }
+
+    if (!form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
@@ -241,6 +244,7 @@ function TxPage() {
         occurred_on: form.occurred_on, // Store as YYYY-MM-DD string
         account_id: form.account_id,
         category_id: form.category_id || null,
+        // user_id não é atualizado aqui, pois é imutável após a criação
       }).eq("id", editId);
       if (error) { 
         console.error("Error updating transaction:", error); 
@@ -267,7 +271,7 @@ function TxPage() {
     let installmentPlanId: string | null = null;
     if (installments > 1) {
       const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
-        user_id: user.id,
+        user_id: user.id, // user.id é garantido aqui pois verificamos no início
         description: form.description,
         total_amount: amountNum,
         installment_amount: installmentAmount,
@@ -296,10 +300,10 @@ function TxPage() {
         invoiceId = inv?.id ?? null;
       }
       rows.push({
-        user_id: user.id,
+        user_id: user.id, // user.id é garantido aqui pois verificamos no início
         type: form.type,
-        amount: installmentAmount,
         description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
+        amount: installmentAmount,
         occurred_on: occurred,
         account_id: account.id,
         category_id: form.category_id || null,
@@ -336,8 +340,8 @@ function TxPage() {
   const selectedAccount = accounts.find((a: any) => a.id === form.account_id);
   const isCardSelected = selectedAccount?.type === "credit_card";
 
-  // Remove a verificação de loading para evitar tela branca
-  // if (txLoading || accLoading || catLoading) return <div className="p-6 text-muted-foreground">Carregando...</div>;
+  // Removida a verificação de loading para evitar tela branca, exibindo o estado de carregamento de forma mais suave.
+  // O estado de loading agora é tratado individualmente por cada useQuery.
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -406,7 +410,8 @@ function TxPage() {
       </div>
 
       <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
-        {tx.length === 0 && <div className="p-8 text-center text-muted-foreground">Nenhum lançamento ainda.</div>}
+        {txLoading && <div className="p-8 text-center text-muted-foreground">Carregando lançamentos...</div>}
+        {!txLoading && tx.length === 0 && <div className="p-8 text-center text-muted-foreground">Nenhum lançamento ainda.</div>}
         <div className="divide-y divide-border">
           {tx.map((t: any) => {
             const dot =
