@@ -2,56 +2,13 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-function createSupabaseClient() {
-  // Use import.meta.env for client-side (Vite build-time replacement)
-  // Fall back to process.env for SSR (server-side rendering)
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_URL = "https://rfwialobgdafttpuqwfx.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJmd2lhbG9iZ2RhFTTTPUQWFXIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2NTczMTIsImV4cCI6MjA5MzIzMzMxMn0.2yENGgoYaRvvjzPquLzWPVWZJLqi-ACBYiTZFBMEw_g";
 
-  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
-    console.error('ERRO CRÍTICO: Variáveis de ambiente do Supabase não encontradas!');
-    throw new Error(
-      'Missing Supabase environment variables. Ensure SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY (or VITE_ prefixed versions) are set in your .env file.'
-    );
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    storage: typeof window !== 'undefined' ? localStorage : undefined,
+    persistSession: true,
+    autoRefreshToken: true,
   }
-
-  return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-    auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-    global: {
-      // Retry simples para falhas transitórias (ex: schema cache miss)
-      fetch: async (input, init) => {
-        let lastErr: any;
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const res = await fetch(input, init);
-            // Retry apenas em 5xx (erros transitórios do servidor)
-            if (res.status >= 500 && res.status < 600 && attempt < 2) {
-              await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
-              continue;
-            }
-            return res;
-          } catch (e) {
-            lastErr = e;
-            await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
-          }
-        }
-        throw lastErr;
-      },
-    },
-  });
-}
-
-let _supabase: ReturnType<typeof createSupabaseClient> | undefined;
-
-// Import the supabase client like this:
-// import { supabase } from "@/integrations/supabase/client";
-export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>, {
-  get(_, prop, receiver) {
-    if (!_supabase) _supabase = createSupabaseClient();
-    return Reflect.get(_supabase, prop, receiver);
-  },
 });
