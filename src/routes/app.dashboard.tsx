@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString, formatDateBR } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -12,6 +12,7 @@ import SpendingChart from "@/components/dashboard/SpendingChart";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { BreakdownCard } from "@/components/dashboard/BreakdownCard";
 import { DashboardCard } from "@/components/dashboard/DashboardCard";
+import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/app/dashboard")({
   component: Dashboard,
@@ -119,6 +120,9 @@ function Dashboard() {
   });
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
 
+  const budget = Number(data?.profile?.monthly_budget || 0);
+  const budgetProgress = budget > 0 ? Math.min(100, (expense / budget) * 100) : 0;
+
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
 
@@ -212,6 +216,26 @@ function Dashboard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Budget Progress */}
+      {budget > 0 && (
+        <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Orçamento Mensal</span>
+            </div>
+            <span className="text-xs text-muted-foreground font-mono">
+              {formatBRL(expense)} / {formatBRL(budget)}
+            </span>
+          </div>
+          <Progress value={budgetProgress} className="h-2" />
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground uppercase tracking-wider">
+            <span>{budgetProgress.toFixed(0)}% consumido</span>
+            <span>{formatBRL(budget - expense)} restante</span>
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

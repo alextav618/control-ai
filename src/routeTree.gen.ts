@@ -17,6 +17,7 @@ import { Route as AppTransactionsRouteImport } from './routes/app.transactions'
 import { Route as AppProfilesRouteImport } from './routes/app.profiles'
 import { Route as AppInvoicesRouteImport } from './routes/app.invoices'
 import { Route as AppInvestmentsRouteImport } from './routes/app.investments'
+import { Route as AppInstallmentsRouteImport } from './routes/app.installments'
 import { Route as AppInsightsRouteImport } from './routes/app.insights'
 import { Route as AppGoalsRouteImport } from './routes/app.goals'
 import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
@@ -63,6 +64,11 @@ const AppInvoicesRoute = AppInvoicesRouteImport.update({
 const AppInvestmentsRoute = AppInvestmentsRouteImport.update({
   id: '/investments',
   path: '/investments',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInstallmentsRoute = AppInstallmentsRouteImport.update({
+  id: '/installments',
+  path: '/installments',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInsightsRoute = AppInsightsRouteImport.update({
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
+  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
@@ -128,6 +135,7 @@ export interface FileRoutesByTo {
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
+  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
@@ -146,6 +154,7 @@ export interface FileRoutesById {
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
+  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
@@ -165,6 +174,7 @@ export interface FileRouteTypes {
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
+    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
@@ -181,6 +191,7 @@ export interface FileRouteTypes {
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
+    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
@@ -198,6 +209,7 @@ export interface FileRouteTypes {
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
+    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
@@ -271,6 +283,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInvestmentsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/installments': {
+      id: '/app/installments'
+      path: '/installments'
+      fullPath: '/app/installments'
+      preLoaderRoute: typeof AppInstallmentsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/insights': {
       id: '/app/insights'
       path: '/insights'
@@ -330,6 +349,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppGoalsRoute: typeof AppGoalsRoute
   AppInsightsRoute: typeof AppInsightsRoute
+  AppInstallmentsRoute: typeof AppInstallmentsRoute
   AppInvestmentsRoute: typeof AppInvestmentsRoute
   AppInvoicesRoute: typeof AppInvoicesRoute
   AppProfilesRoute: typeof AppProfilesRoute
@@ -344,6 +364,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppGoalsRoute: AppGoalsRoute,
   AppInsightsRoute: AppInsightsRoute,
+  AppInstallmentsRoute: AppInstallmentsRoute,
   AppInvestmentsRoute: AppInvestmentsRoute,
   AppInvoicesRoute: AppInvoicesRoute,
   AppProfilesRoute: AppProfilesRoute,

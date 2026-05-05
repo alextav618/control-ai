@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -88,12 +88,13 @@ function TxPage() {
     amount: "",
     occurred_on: todayLocal(),
     account_id: "",
+    to_account_id: "",
     category_id: "",
     installments: "1",
   });
 
   const resetForm = () => {
-    setForm({ type: "expense", description: "", amount: "", occurred_on: todayLocal(), account_id: "", category_id: "", installments: "1" });
+    setForm({ type: "expense", description: "", amount: "", occurred_on: todayLocal(), account_id: "", to_account_id: "", category_id: "", installments: "1" });
     setEditId(null);
   };
 
@@ -105,6 +106,7 @@ function TxPage() {
       amount: String(t.amount),
       occurred_on: t.occurred_on,
       account_id: t.account_id ?? "",
+      to_account_id: "",
       category_id: t.category_id ?? "",
       installments: "1",
     });
@@ -210,6 +212,15 @@ function TxPage() {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+    if (form.type === "transfer" && !form.to_account_id) {
+      toast.error("Selecione a conta de destino");
+      return;
+    }
+    if (form.type === "transfer" && form.account_id === form.to_account_id) {
+      toast.error("As contas de origem e destino devem ser diferentes");
+      return;
+    }
+
     setSubmitting(true);
     try {
       const amountNum = Number(form.amount);
@@ -233,61 +244,96 @@ function TxPage() {
 
       const account = accounts.find((a: any) => a.id === form.account_id);
       const isCard = account?.type === "credit_card";
-      const installments = Math.max(1, Number(form.installments) || 1);
-      const installmentAmount = +(amountNum / installments).toFixed(2);
 
-      let installmentPlanId: string | null = null;
-      if (installments > 1) {
-        const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
-          user_id: user.id,
-          description: form.description,
-          total_amount: amountNum,
-          installment_amount: installmentAmount,
-          total_installments: installments,
-          account_id: account.id,
-          category_id: form.category_id || null,
-          start_date: form.occurred_on,
-        }).select().single();
-        if (pErr) throw pErr;
-        installmentPlanId = plan.id;
-      }
+      if (form.type === "transfer") {
+        // Transferência: cria duas transações vinculadas
+        const rows = [
+          {
+            user_id: user.id,
+            type: "expense",
+            description: `Transferência: ${form.description}`,
+            amount: amountNum,
+            occurred_on: form.occurred_on,
+            account_id: form.account_id,
+            category_id: form.category_id || null,
+            status: "paid",
+            source: "manual",
+          },
+          {
+            user_id: user.id,
+            type: "income",
+            description: `Transferência: ${form.description}`,
+            amount: amountNum,
+            occurred_on: form.occurred_on,
+            account_id: form.to_account_id,
+            category_id: form.category_id || null,
+            status: "paid",
+            source: "manual",
+          }
+        ];
+        const { error } = await supabase.from('transactions').insert(rows);
+        if (error) throw error;
+        toast.success("Transferência realizada");
+      } else {
+        // Despesa ou Receita (com suporte a parcelamento)
+        const installments = Math.max(1, Number(form.installments) || 1);
+        const installmentAmount = +(amountNum / installments).toFixed(2);
 
-      const rows: any[] = [];
-      for (let i = 0; i < installments; i++) {
-        const installmentDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
-        const occurred = localDateString(installmentDate); 
-
-        let invoiceId: string | null = null;
-        if (isCard) {
-          const inv = await ensureInvoice(account, installmentDate);
-          invoiceId = inv?.id ?? null;
+        let installmentPlanId: string | null = null;
+        if (installments > 1) {
+          const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
+            user_id: user.id,
+            description: form.description,
+            total_amount: amountNum,
+            installment_amount: installmentAmount,
+            total_installments: installments,
+            account_id: account.id,
+            category_id: form.category_id || null,
+            start_date: form.occurred_on,
+          }).select().single();
+          if (pErr) throw pErr;
+          installmentPlanId = plan.id;
         }
-        rows.push({
-          user_id: user.id,
-          type: form.type,
-          description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
-          amount: installmentAmount,
-          occurred_on: occurred,
-          account_id: account.id,
-          category_id: form.category_id || null,
-          installment_plan_id: installmentPlanId,
-          installment_number: installments > 1 ? i + 1 : null,
-          invoice_id: invoiceId,
-          status: "paid", 
-          source: "manual",
-        });
+
+        const rows: any[] = [];
+        for (let i = 0; i < installments; i++) {
+          const installmentDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
+          const occurred = localDateString(installmentDate); 
+
+          let invoiceId: string | null = null;
+          if (isCard) {
+            const inv = await ensureInvoice(account, installmentDate);
+            invoiceId = inv?.id ?? null;
+          }
+          rows.push({
+            user_id: user.id,
+            type: form.type,
+            description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
+            amount: installmentAmount,
+            occurred_on: occurred,
+            account_id: account.id,
+            category_id: form.category_id || null,
+            installment_plan_id: installmentPlanId,
+            installment_number: installments > 1 ? i + 1 : null,
+            invoice_id: invoiceId,
+            status: "paid", 
+            source: "manual",
+          });
+        }
+
+        const { error } = await supabase.from('transactions').insert(rows);
+        if (error) throw error;
+        
+        const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
+        for (const invId of invoiceIds) await recomputeInvoiceTotal(invId);
+        
+        toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
       }
 
-      const { error } = await supabase.from('transactions').insert(rows);
-      if (error) throw error;
-      
-      const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-      for (const invId of invoiceIds) await recomputeInvoiceTotal(invId);
-      
-      toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -312,6 +358,7 @@ function TxPage() {
                     <SelectContent>
                       <SelectItem value="expense">Despesa</SelectItem>
                       <SelectItem value="income">Receita</SelectItem>
+                      <SelectItem value="transfer">Transferência</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -332,7 +379,7 @@ function TxPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label>Conta / Cartão</Label>
+                  <Label>{form.type === "transfer" ? "Conta de Origem" : "Conta / Cartão"}</Label>
                   <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
@@ -340,15 +387,27 @@ function TxPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <Label>Categoria</Label>
-                  <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      {cats.filter((c: any) => c.kind === form.type).map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {form.type === "transfer" ? (
+                  <div>
+                    <Label>Conta de Destino</Label>
+                    <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>
+                        {accounts.filter(a => a.id !== form.account_id).map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <div>
+                    <Label>Categoria</Label>
+                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
+                      <SelectContent>
+                        {cats.filter((c: any) => c.kind === form.type).map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
               </div>
               <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : (editId ? "Salvar alterações" : "Lançar")}</Button>
             </div>
