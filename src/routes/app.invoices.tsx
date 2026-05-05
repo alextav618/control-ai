@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+"use client";
+
 import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,15 +18,21 @@ export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
 });
 
-/** Recomputes the total_amount for an invoice by summing all transactions and invoice_items */
+/** Recomputes the total_amount for an invoice by summing all transactions, invoice_items, and initial_balances */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
+  // Sum transactions
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
+  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
+
+  // Get initial balance
+  const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("initial_balance").eq("invoice_id", invoiceId).maybeSingle();
+  const initialBalance = Number(initialBalanceData?.initial_balance || 0);
   
-  const total = txTotal + itemsTotal;
+  const total = txTotal + itemsTotal + initialBalance;
   await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
 };
 
@@ -176,8 +183,7 @@ function InvoicesPage() {
 
   const saveInitialBalance = async () => {
     if (!user || !initialBalanceForm.invoice_id || !initialBalanceForm.initial_balance) return;
-    
-    const amount = Number(initialBalanceForm.initial_balance);
+        const amount = Number(initialBalanceForm.initial_balance);
     if (isNaN(amount)) {
       toast.error("Informe um valor válido");
       return;
@@ -192,8 +198,7 @@ function InvoicesPage() {
     if (error) { toast.error(error.message); return; }
 
     await recomputeInvoiceTotal(initialBalanceForm.invoice_id);
-    
-    toast.success("Saldo inicial salvo");
+        toast.success("Saldo inicial salvo");
     setInitialBalanceDialog(false);
     setInitialBalanceForm({ invoice_id: "", initial_balance: "" });
     qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -226,7 +231,16 @@ function InvoicesPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {open.map((inv: any) => <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} onPay={() => openPay(inv)} onAddItem={() => openItemDialog(inv)} onSetInitialBalance={() => openInitialBalanceDialog(inv)} />)}
+            {open.map((inv: any) => (
+              <InvCard
+                key={inv.id}
+                inv={inv}
+                initialBalances={initialBalances}
+                onPay={() => openPay(inv)}
+                onAddItem={() => openItemDialog(inv)}
+                onSetInitialBalance={() => openInitialBalanceDialog(inv)}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -235,7 +249,14 @@ function InvoicesPage() {
         <section>
           <h2 className="font-display font-semibold mb-3 text-sm text-muted-foreground uppercase tracking-wide">Pagas</h2>
           <div className="space-y-2">
-            {paid.slice(0, 12).map((inv: any) => <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} onReopen={() => reopen(inv)} />)}
+            {paid.slice(0, 12).map((inv: any) => (
+              <InvCard
+                key={inv.id}
+                inv={inv}
+                initialBalances={initialBalances}
+                onReopen={() => reopen(inv)}
+              />
+            ))}
           </div>
         </section>
       )}
@@ -326,33 +347,33 @@ function InvoicesPage() {
   );
 }
 
-function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance, initialBalances }: { 
+/** Reusable invoice card component */
+function InvCard({ inv, onPay, onAddItem, onSetInitialBalance, initialBalances }: { 
   inv: any; 
   onPay?: () => void; 
-  onReopen?: () => void; 
   onAddItem?: () => void; 
   onSetInitialBalance?: () => void;
   initialBalances?: any[];
 }) {
-  // Use reference_month and reference_year for correct month calculation
-  const due = new Date(inv.due_date + "T12:00:00");
-  const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-  const overdue = inv.status !== "paid" && days < 0;
-  const urgent = inv.status !== "paid" && days >= 0 && days <= 5;
-  const isPaid = inv.status === "paid";
+  // Compute total including initial balance
+  const initialBalance = initialBalances?.find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
+  const total = Number(inv.total_amount) + initialBalance;
 
+  // Determine overdue status
+  const due = new Date(inv.due_date + "T12:00:00");
+  const today = new Date();
+  const days = Math.ceil((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+  const overdue = days < 0;
+  const urgent = days >= 0 && days <= 5;
+
+  // Load invoice items for this card
   const [items, setItems] = useState<any[]>([]);
   const [loadingItems, setLoadingItems] = useState(true);
   const qc = useQueryClient();
 
   useEffect(() => {
-    loadItems();
-  }, [inv.id]);
-
-  const loadItems = async () => {
-    setLoadingItems(true);
-    try {
-      const data = await qc.fetchQuery({
+    const fetchItems = async () => {
+      const { data } = await qc.fetchQuery({
         queryKey: ["invoice_items", inv.id],
         queryFn: async () => {
           const { data: itemsData } = await supabase.from("invoice_items").select("*").eq("invoice_id", inv.id);
@@ -360,13 +381,10 @@ function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance, initial
         },
       });
       setItems(data || []);
-    } catch (error) {
-      console.error("Error loading invoice items:", error);
-      setItems([]);
-    } finally {
       setLoadingItems(false);
-    }
-  };
+    };
+    fetchItems();
+  }, [inv.id, qc]);
 
   const removeItem = async (itemId: string) => {
     const { error } = await supabase.from("invoice_items").delete().eq("id", itemId);
@@ -378,75 +396,52 @@ function InvCard({ inv, onPay, onReopen, onAddItem, onSetInitialBalance, initial
     qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
-  // Calculate total including initial balance
-  const initialBalance = initialBalances?.find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-  const total = Number(inv.total_amount) + initialBalance;
-
   return (
     <div className={cn(
       "rounded-2xl border bg-surface-1 p-4 flex items-start gap-3 shadow-card transition-all",
       overdue ? "border-audit-red/40" : urgent ? "border-audit-yellow/40" : "border-border",
-      isPaid && "opacity-70"
+      total >= 0 ? "opacity-70" : ""
     )}>
       <div className="h-10 w-10 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
         <CreditCard className="h-5 w-5 text-primary" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="font-medium flex items-center gap-2 flex-wrap">
-          {inv.accounts?.name}
-          {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red flex items-center gap-1"><AlertCircle className="h-3 w-3" />{Math.abs(days)}d em atraso</span>}
-          {urgent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days === 0 ? "vence hoje" : `${days}d`}</span>}
-          {isPaid && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-green/20 text-audit-green">paga</span>}
-        </div>
+        <div className="font-medium truncate">{inv.accounts?.name}</div>
         <div className="text-xs text-muted-foreground mt-0.5">
-          {monthNames[inv.reference_month - 1]}/{inv.reference_year} · vence {formatDateBR(inv.due_date)}
+          {inv.reference_month ? `${monthNames[inv.reference_month - 1]}/${inv.reference_year}` : "—"}
+          {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red">vencida</span>}
+          {urgent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
         </div>
-        
-        {/* Items da fatura */}
-        <div className="mt-3 space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">Itens</span>
-            {onAddItem && !isPaid && (
-              <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onAddItem}>
-                <Plus className="h-3 w-3 mr-1" /> Item
-              </Button>
-            )}
-          </div>
-          {loadingItems ? (
-            <div className="text-xs text-muted-foreground">Carregando...</div>
-          ) : items.length === 0 ? (
-            <div className="text-xs text-muted-foreground/70 italic">Nenhum item</div>
-          ) : (
-            <div className="space-y-1">
-              {items.map((item: any) => (
-                <div key={item.id} className="flex items-center justify-between bg-surface-2/50 rounded px-2 py-1">
-                  <div className="text-xs">
-                    <span className="font-medium">{item.quantity}x</span> {item.description}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-mono">{formatBRL(Number(item.amount))}</span>
-                    {!isPaid && (
-                      <button onClick={() => removeItem(item.id)} className="opacity-50 hover:opacity-100">
-                        <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="mt-1 text-xs text-muted-foreground">
+          {inv.amount_kind === "fixed" ? "Fixo" : "Variável"}
         </div>
+        <div className="mt-2 font-mono tabular text-2xl font-semibold">{formatBRL(total)}</div>
       </div>
-      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap ml-2">{formatBRL(total)}</div>
+      <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(total)}</div>
       <div className="flex flex-col gap-1">
         {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1" />Pagar</Button>}
         {onReopen && <Button size="sm" variant="ghost" onClick={onReopen}>Reabrir</Button>}
-        {!isPaid && onSetInitialBalance && (
+        {!overdue && onSetInitialBalance && (
           <Button size="sm" variant="outline" onClick={onSetInitialBalance}>
             Saldo inicial
           </Button>
         )}
       </div>
+      {items.length > 0 && (
+        <div className="mt-3 space-y-1">
+          {items.map((it: any) => (
+            <div key={it.id} className="flex items-center justify-between bg-surface-2/50 rounded px-2 py-1">
+              <div className="text-xs font-medium">{it.quantity}x</div>{it.description}
+              <div className="font-mono">{formatBRL(Number(it.amount))}</div>
+              {!overdue && (
+                <button onClick={() => removeItem(it.id)} className="opacity-50 hover:opacity-100">
+                  <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
