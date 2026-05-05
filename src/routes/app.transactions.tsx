@@ -84,6 +84,7 @@ function TxPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
     type: "expense",
     description: "",
@@ -119,10 +120,15 @@ function TxPage() {
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       if (!user) return [];
-      // Query simplificada, removendo joins complexos que podem causar conflito
       const { data, error } = await supabase
         .from("transactions")
-        .select("*") // Seleciona todas as colunas da tabela transactions
+        .select(`
+          *,
+          categories(name, icon, color),
+          accounts(name, type, closing_day, due_day, archived),
+          invoices(id, account_id, reference_month, reference_year)
+        `)
+        .eq("accounts.archived", false) // Filtra contas arquivadas
         .order("occurred_on", { ascending: false })
         .limit(200);
       if (error) {
@@ -215,17 +221,13 @@ function TxPage() {
   };
 
   const submit = async () => {
-    // Verifica se o usuário está logado antes de prosseguir
-    if (!user) {
-      console.error("User not logged in. Cannot submit transaction.");
-      toast.error("Você precisa estar logado para adicionar lançamentos.");
-      return;
-    }
-
-    if (!form.description || !form.amount || !form.account_id) {
+    if (submitting) return; // previne duplo submit
+    if (!user || !form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
+    setSubmitting(true);
+    try {
 
     const amountNum = Number(form.amount);
     if (isNaN(amountNum) || amountNum <= 0) {
@@ -233,7 +235,6 @@ function TxPage() {
       return;
     }
 
-    // Usa a data local para criar o objeto Date, garantindo que o timezone local seja considerado
     const occurredDate = new Date(form.occurred_on + "T12:00:00"); 
 
     if (editId) {
@@ -244,7 +245,6 @@ function TxPage() {
         occurred_on: form.occurred_on, // Store as YYYY-MM-DD string
         account_id: form.account_id,
         category_id: form.category_id || null,
-        // user_id não é atualizado aqui, pois é imutável após a criação
       }).eq("id", editId);
       if (error) { 
         console.error("Error updating transaction:", error); 
@@ -271,7 +271,7 @@ function TxPage() {
     let installmentPlanId: string | null = null;
     if (installments > 1) {
       const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
-        user_id: user.id, // user.id é garantido aqui pois verificamos no início
+        user_id: user.id,
         description: form.description,
         total_amount: amountNum,
         installment_amount: installmentAmount,
@@ -290,9 +290,8 @@ function TxPage() {
 
     const rows: any[] = [];
     for (let i = 0; i < installments; i++) {
-      // Calculate date for each installment using local timezone
       const installmentDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
-      const occurred = localDateString(installmentDate); // Format as YYYY-MM-DD
+      const occurred = localDateString(installmentDate); 
 
       let invoiceId: string | null = null;
       if (isCard) {
@@ -300,7 +299,7 @@ function TxPage() {
         invoiceId = inv?.id ?? null;
       }
       rows.push({
-        user_id: user.id, // user.id é garantido aqui pois verificamos no início
+        user_id: user.id,
         type: form.type,
         description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
         amount: installmentAmount,
@@ -311,15 +310,15 @@ function TxPage() {
         installment_plan_id: installmentPlanId,
         installment_number: installments > 1 ? i + 1 : null,
         invoice_id: invoiceId,
-        status: "paid", // Assume paid for manual entry
+        status: "paid", 
         source: "manual",
       });
     }
 
-    const { error } = await supabase.from("transactions").insert(rows as any);
+    const { error } = await supabase.from('transactions').insert(rows);
     if (error) { 
       console.error("Error inserting transactions:", error); 
-      toast.error(error.message); 
+      window.alert(`Falha ao inserir lançamento: ${error.message}`); // Alert para erro de inserção
       return; 
     }
     
@@ -334,14 +333,14 @@ function TxPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
     qc.invalidateQueries({ queryKey: ["invoices"] });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
   const selectedAccount = accounts.find((a: any) => a.id === form.account_id);
   const isCardSelected = selectedAccount?.type === "credit_card";
-
-  // Removida a verificação de loading para evitar tela branca, exibindo o estado de carregamento de forma mais suave.
-  // O estado de loading agora é tratado individualmente por cada useQuery.
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -403,7 +402,7 @@ function TxPage() {
                   💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
                 </p>
               )}
-              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Lançar"}</Button>
+              <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : (editId ? "Salvar alterações" : "Lançar")}</Button>
             </div>
           </DialogContent>
         </Dialog>
