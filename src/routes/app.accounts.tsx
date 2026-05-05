@@ -41,7 +41,10 @@ function AccountsPage() {
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("accounts").select("*").eq("archived", false).order("created_at");
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch accounts):', error);
+        throw error;
+      }
       return data;
     },
     enabled: !!user,
@@ -79,11 +82,19 @@ function AccountsPage() {
 
     if (editId) {
       const { error } = await supabase.from("accounts").update(payload).eq("id", editId);
-      if (error) { toast.error(error.message); return; }
+      if (error) { 
+        console.error('Erro Supabase (update account):', error);
+        toast.error(error.message); 
+        return; 
+      }
       toast.success("Conta atualizada");
     } else {
       const { error } = await supabase.from("accounts").insert({ user_id: user.id, ...payload });
-      if (error) { toast.error(error.message); return; }
+      if (error) { 
+        console.error('Erro Supabase (insert account):', error);
+        toast.error(error.message); 
+        return; 
+      }
       toast.success("Conta criada");
     }
     setOpen(false);
@@ -95,8 +106,10 @@ function AccountsPage() {
   const confirmRemove = async () => {
     if (!confirmDel) return;
     const { error } = await supabase.from("accounts").update({ archived: true }).eq("id", confirmDel.id);
-    if (error) toast.error(error.message);
-    else {
+    if (error) {
+      console.error('Erro Supabase (archive account):', error);
+      toast.error(error.message);
+    } else {
       toast.success("Conta excluída");
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });

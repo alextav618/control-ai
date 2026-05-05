@@ -45,7 +45,10 @@ function InvoicesPage() {
         .eq("accounts.archived", false)
         .order("reference_year", { ascending: false })
         .order("reference_month", { ascending: false });
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch invoices):', error);
+        throw error;
+      }
       return data;
     },
     enabled: !!user,
@@ -54,7 +57,8 @@ function InvoicesPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
+      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
+      if (error) console.error('Erro Supabase (fetch accounts):', error);
       return data ?? [];
     },
     enabled: !!user,
@@ -67,7 +71,10 @@ function InvoicesPage() {
         .from("invoice_initial_balances")
         .select("*, invoices(reference_month, reference_year, accounts(name))")
         .order("created_at", { ascending: false });
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch initial balances):', error);
+        throw error;
+      }
       return data;
     },
     enabled: !!user,
@@ -77,7 +84,8 @@ function InvoicesPage() {
 
   // Actions
   const triggerRecompute = async (invoiceId: string) => {
-    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
+    const { error } = await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
+    if (error) console.error('Erro Supabase (rpc recompute):', error);
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
@@ -96,10 +104,18 @@ function InvoicesPage() {
       status: "paid",
       source: "manual",
     });
-    if (txErr) { toast.error(txErr.message); return; }
+    if (txErr) { 
+      console.error('Erro Supabase (pay tx insert):', txErr);
+      toast.error(txErr.message); 
+      return; 
+    }
 
     const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
-    if (invErr) { toast.error(invErr.message); return; }
+    if (invErr) { 
+      console.error('Erro Supabase (pay invoice update):', invErr);
+      toast.error(invErr.message); 
+      return; 
+    }
 
     toast.success("Fatura paga ✓");
     setPayInv(null);
@@ -120,7 +136,11 @@ function InvoicesPage() {
       unit_price: unit,
       amount: qty * unit,
     });
-    if (error) { toast.error(error.message); return; }
+    if (error) { 
+      console.error('Erro Supabase (save invoice item):', error);
+      toast.error(error.message); 
+      return; 
+    }
     await triggerRecompute(payInv.id);
     toast.success("Item adicionado");
     setItemDialog(false);
@@ -135,18 +155,25 @@ function InvoicesPage() {
   const saveAdjustment = async () => {
     if (!user || !adjForm.invoice_id || !adjForm.amount) return;
     
+    const amountNum = Number(adjForm.amount);
+    const inv = invoices.find(i => i.id === adjForm.invoice_id);
+    
     const payload: any = {
       user_id: user.id,
       invoice_id: adjForm.invoice_id,
-      amount: Number(adjForm.amount),
-      month_year: `${invoices.find(i => i.id === adjForm.invoice_id)?.reference_month}/${invoices.find(i => i.id === adjForm.invoice_id)?.reference_year}`
+      amount: amountNum,
+      month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual"
     };
 
     if (editingAdj) payload.id = editingAdj.id;
 
     const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
     
-    if (error) { toast.error(error.message); return; }
+    if (error) { 
+      console.error('Erro Supabase (save adjustment):', error);
+      toast.error(error.message); 
+      return; 
+    }
     
     await triggerRecompute(adjForm.invoice_id);
     toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
@@ -158,7 +185,11 @@ function InvoicesPage() {
   const deleteAdjustment = async (adj: any) => {
     if (!confirm("Excluir este ajuste de saldo inicial? O total da fatura será recalculado.")) return;
     const { error } = await supabase.from("invoice_initial_balances").delete().eq("id", adj.id);
-    if (error) { toast.error(error.message); return; }
+    if (error) { 
+      console.error('Erro Supabase (delete adjustment):', error);
+      toast.error(error.message); 
+      return; 
+    }
     
     await triggerRecompute(adj.invoice_id);
     toast.success("Ajuste excluído");
@@ -372,6 +403,10 @@ function InvCard({ inv, onPay, onAddItem }: any) {
         supabase.from("invoice_items").select("*").eq("invoice_id", inv.id),
         supabase.from("invoice_initial_balances").select("*").eq("invoice_id", inv.id).maybeSingle(),
       ]);
+      if (txR.error) console.error('Erro Supabase (fetch inv txs):', txR.error);
+      if (itemsR.error) console.error('Erro Supabase (fetch inv items):', itemsR.error);
+      if (adjR.error) console.error('Erro Supabase (fetch inv adj):', adjR.error);
+      
       return { transactions: txR.data ?? [], items: itemsR.data ?? [], adjustment: adjR.data };
     },
     enabled: expanded,

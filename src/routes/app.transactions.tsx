@@ -57,17 +57,24 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
 }
 
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+  const { data: txs, error: txsErr } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+  if (txsErr) console.error('Erro Supabase (recompute txs):', txsErr);
+  
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
-  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
+  const { data: items, error: itemsErr } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
+  if (itemsErr) console.error('Erro Supabase (recompute items):', itemsErr);
+  
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
 
-  const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("initial_balance").eq("invoice_id", invoiceId).maybeSingle();
-  const initialBalance = Number(initialBalanceData?.initial_balance || 0);
+  const { data: initialBalanceData, error: balErr } = await supabase.from("invoice_initial_balances").select("amount").eq("invoice_id", invoiceId).maybeSingle();
+  if (balErr) console.error('Erro Supabase (recompute balance):', balErr);
+  
+  const initialBalance = Number(initialBalanceData?.amount || 0);
   
   const total = txTotal + itemsTotal + initialBalance;
-  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
+  const { error: updErr } = await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
+  if (updErr) console.error('Erro Supabase (recompute update):', updErr);
 };
 
 function TxPage() {
@@ -127,10 +134,13 @@ function TxPage() {
           accounts(name, type, closing_day, due_day, archived),
           invoices(id, account_id, reference_month, reference_year)
         `)
-        .eq("accounts.archived", false)
+        .eq("user_id", user.id)
         .order("occurred_on", { ascending: false })
         .limit(500);
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch tx):', error);
+        throw error;
+      }
       return data;
     },
     enabled: !!user,
@@ -141,7 +151,10 @@ function TxPage() {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch accounts):', error);
+        throw error;
+      }
       return data ?? [];
     },
     enabled: !!user,
@@ -152,7 +165,10 @@ function TxPage() {
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase.from("categories").select("*");
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch categories):', error);
+        throw error;
+      }
       return data ?? [];
     },
     enabled: !!user,
@@ -169,11 +185,17 @@ function TxPage() {
 
   const remove = async (id: string) => {
     if (!confirm("Excluir este lançamento?")) return;
-    const { data: txData } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
+    const { data: txData, error: fetchErr } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
+    if (fetchErr) console.error('Erro Supabase (fetch before delete):', fetchErr);
+    
     const invoiceId = txData?.invoice_id;
     
     const { error } = await supabase.from("transactions").delete().eq("id", id);
-    if (error) { toast.error(error.message); return; }
+    if (error) { 
+      console.error('Erro Supabase (delete tx):', error);
+      toast.error(error.message); 
+      return; 
+    }
     
     if (invoiceId) await recomputeInvoiceTotal(invoiceId);
     toast.success("Removido"); 
@@ -184,14 +206,17 @@ function TxPage() {
   const ensureInvoice = async (account: any, purchaseDate: Date) => {
     if (!user) return null;
     const w = invoiceWindow(purchaseDate, account.closing_day ?? 1, account.due_day ?? 10);
-    const { data: existing } = await supabase
+    const { data: existing, error: findErr } = await supabase
       .from("invoices")
       .select("*")
       .eq("account_id", account.id)
       .eq("reference_month", w.referenceMonth)
       .eq("reference_year", w.referenceYear)
       .maybeSingle();
+    
+    if (findErr) console.error('Erro Supabase (find invoice):', findErr);
     if (existing) return existing;
+
     const { data: created, error } = await supabase.from("invoices").insert({
       user_id: user.id,
       account_id: account.id,
@@ -202,7 +227,11 @@ function TxPage() {
       status: "open",
       total_amount: 0,
     }).select().single();
-    if (error) return null;
+    
+    if (error) {
+      console.error('Erro Supabase (create invoice):', error);
+      return null;
+    }
     return created;
   };
 
@@ -212,18 +241,15 @@ function TxPage() {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
-    if (form.type === "transfer" && !form.to_account_id) {
-      toast.error("Selecione a conta de destino");
-      return;
-    }
-    if (form.type === "transfer" && form.account_id === form.to_account_id) {
-      toast.error("As contas de origem e destino devem ser diferentes");
+    
+    const amountNum = Number(form.amount);
+    if (isNaN(amountNum)) {
+      toast.error("Valor inválido");
       return;
     }
 
     setSubmitting(true);
     try {
-      const amountNum = Number(form.amount);
       const occurredDate = new Date(form.occurred_on + "T12:00:00"); 
 
       if (editId) {
@@ -235,7 +261,12 @@ function TxPage() {
           account_id: form.account_id,
           category_id: form.category_id || null,
         }).eq("id", editId);
-        if (error) throw error;
+        
+        if (error) {
+          console.error('Erro Supabase (update tx):', error);
+          throw error;
+        }
+        
         toast.success("Lançamento atualizado");
         setOpen(false);
         qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -246,36 +277,37 @@ function TxPage() {
       const isCard = account?.type === "credit_card";
 
       if (form.type === "transfer") {
-        // Transferência: cria duas transações vinculadas
         const rows = [
           {
             user_id: user.id,
-            type: "expense",
+            type: "expense" as const,
             description: `Transferência: ${form.description}`,
             amount: amountNum,
             occurred_on: form.occurred_on,
             account_id: form.account_id,
             category_id: form.category_id || null,
-            status: "paid",
+            status: "paid" as const,
             source: "manual",
           },
           {
             user_id: user.id,
-            type: "income",
+            type: "income" as const,
             description: `Transferência: ${form.description}`,
             amount: amountNum,
             occurred_on: form.occurred_on,
             account_id: form.to_account_id,
             category_id: form.category_id || null,
-            status: "paid",
+            status: "paid" as const,
             source: "manual",
           }
         ];
         const { error } = await supabase.from('transactions').insert(rows);
-        if (error) throw error;
+        if (error) {
+          console.error('Erro Supabase (transfer insert):', error);
+          throw error;
+        }
         toast.success("Transferência realizada");
       } else {
-        // Despesa ou Receita (com suporte a parcelamento)
         const installments = Math.max(1, Number(form.installments) || 1);
         const installmentAmount = +(amountNum / installments).toFixed(2);
 
@@ -291,7 +323,11 @@ function TxPage() {
             category_id: form.category_id || null,
             start_date: form.occurred_on,
           }).select().single();
-          if (pErr) throw pErr;
+          
+          if (pErr) {
+            console.error('Erro Supabase (plan insert):', pErr);
+            throw pErr;
+          }
           installmentPlanId = plan.id;
         }
 
@@ -322,7 +358,10 @@ function TxPage() {
         }
 
         const { error } = await supabase.from('transactions').insert(rows);
-        if (error) throw error;
+        if (error) {
+          console.error('Erro Supabase (tx insert):', error);
+          throw error;
+        }
         
         const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
         for (const invId of invoiceIds) await recomputeInvoiceTotal(invId);
