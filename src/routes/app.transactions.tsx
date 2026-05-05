@@ -109,10 +109,14 @@ function TxPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("transactions")
-        .select("*, accounts(name, type, closing_day, due_day), categories(name, icon), invoices(reference_month, reference_year, account_id, accounts(name))")
+        .select("*, accounts(name, type, closing_day, due_day), categories(name, icon), invoices(id, account_id, reference_month, reference_year, accounts(name))")
         .order("occurred_on", { ascending: false })
         .limit(200);
-      if (error) throw error;
+      if (error) {
+        console.error("Error fetching transactions:", error);
+        toast.error("Erro ao carregar lançamentos");
+        return [];
+      }
       return data;
     },
     enabled: !!user,
@@ -121,7 +125,12 @@ function TxPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
+      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
+      if (error) {
+        console.error("Error fetching accounts:", error);
+        toast.error("Erro ao carregar contas");
+        return [];
+      }
       return data ?? [];
     },
     enabled: !!user,
@@ -130,26 +139,35 @@ function TxPage() {
   const { data: cats = [] } = useQuery({
     queryKey: ["categories", user?.id, form.type],
     queryFn: async () => {
-      const { data } = await supabase.from("categories").select("*");
+      const { data, error } = await supabase.from("categories").select("*");
+      if (error) {
+        console.error("Error fetching categories:", error);
+        toast.error("Erro ao carregar categorias");
+        return [];
+      }
       return data ?? [];
     },
     enabled: !!user,
   });
 
   const remove = async (id: string) => {
-    const { data: tx } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
-    const invoiceId = tx?.invoice_id;
+    const { data: txData } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
+    const invoiceId = txData?.invoice_id;
     
     const { error } = await supabase.from("transactions").delete().eq("id", id);
-    if (error) toast.error(error.message);
-    else { 
-      if (invoiceId) {
-        await recomputeInvoiceTotal(invoiceId);
-      }
-      toast.success("Removido"); 
-      qc.invalidateQueries({ queryKey: ["transactions"] }); 
-      qc.invalidateQueries({ queryKey: ["dashboard"] }); 
+    if (error) {
+      console.error("Error deleting transaction:", error);
+      toast.error(error.message);
+      return;
     }
+    
+    if (invoiceId) {
+      await recomputeInvoiceTotal(invoiceId);
+    }
+    toast.success("Removido"); 
+    qc.invalidateQueries({ queryKey: ["transactions"] }); 
+    qc.invalidateQueries({ queryKey: ["dashboard"] }); 
+    qc.invalidateQueries({ queryKey: ["accounts"] }); 
   };
 
   const ensureInvoice = async (account: any, purchaseDate: Date) => {
@@ -173,7 +191,11 @@ function TxPage() {
       status: "open",
       total_amount: 0,
     }).select().single();
-    if (error) { toast.error(error.message); return null; }
+    if (error) { 
+      console.error("Error creating invoice:", error); 
+      toast.error("Erro ao criar fatura para o lançamento");
+      return null; 
+    }
     return created;
   };
 
@@ -183,16 +205,26 @@ function TxPage() {
       return;
     }
 
+    const amountNum = Number(form.amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      toast.error("Valor inválido");
+      return;
+    }
+
     if (editId) {
       const { error } = await supabase.from("transactions").update({
         type: form.type as any,
         description: form.description,
-        amount: Number(form.amount),
+        amount: amountNum,
         occurred_on: form.occurred_on,
         account_id: form.account_id,
         category_id: form.category_id || null,
       }).eq("id", editId);
-      if (error) { toast.error(error.message); return; }
+      if (error) { 
+        console.error("Error updating transaction:", error); 
+        toast.error(error.message); 
+        return; 
+      }
       toast.success("Lançamento atualizado");
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -202,25 +234,31 @@ function TxPage() {
     }
 
     const account = accounts.find((a: any) => a.id === form.account_id);
-    if (!account) return;
-    const totalAmount = Number(form.amount);
-    const installments = Math.max(1, Number(form.installments) || 1);
+    if (!account) {
+      toast.error("Conta não encontrada");
+      return;
+    }
     const isCard = account.type === "credit_card";
-    const installmentAmount = +(totalAmount / installments).toFixed(2);
+    const installments = Math.max(1, Number(form.installments) || 1);
+    const installmentAmount = +(amountNum / installments).toFixed(2);
 
     let installmentPlanId: string | null = null;
     if (installments > 1) {
       const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
         user_id: user.id,
         description: form.description,
-        total_amount: totalAmount,
+        total_amount: amountNum,
         installment_amount: installmentAmount,
         total_installments: installments,
         account_id: account.id,
         category_id: form.category_id || null,
         start_date: form.occurred_on,
       }).select().single();
-      if (pErr) { toast.error(pErr.message); return; }
+      if (pErr) { 
+        console.error("Error creating installment plan:", pErr); 
+        toast.error(pErr.message); 
+        return; 
+      }
       installmentPlanId = plan.id;
     }
 
@@ -228,12 +266,12 @@ function TxPage() {
     const rows: any[] = [];
     for (let i = 0; i < installments; i++) {
       const d = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
+      const occurred = localDateString(d);
       let invoiceId: string | null = null;
       if (isCard) {
         const inv = await ensureInvoice(account, d);
         invoiceId = inv?.id ?? null;
       }
-      const occurred = localDateString(d);
       rows.push({
         user_id: user.id,
         type: form.type,
@@ -246,13 +284,17 @@ function TxPage() {
         installment_plan_id: installmentPlanId,
         installment_number: installments > 1 ? i + 1 : null,
         invoice_id: invoiceId,
-        status: "paid",
+        status: "paid", // Assume paid for manual entry
         source: "manual",
       });
     }
 
     const { error } = await supabase.from("transactions").insert(rows as any);
-    if (error) { toast.error(error.message); return; }
+    if (error) { 
+      console.error("Error inserting transactions:", error); 
+      toast.error(error.message); 
+      return; 
+    }
     
     const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
     for (const invId of invoiceIds) {
@@ -264,6 +306,7 @@ function TxPage() {
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
   const filteredCats = cats.filter((c: any) => c.kind === form.type);
@@ -298,7 +341,7 @@ function TxPage() {
               <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado Pão de Açúcar" className="mt-1.5" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><Label>{editId ? "Valor" : "Valor total"}</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
-                {form.type === "expense" && !editId && (
+                {!editId && form.type === "expense" && (
                   <div>
                     <Label>Parcelas</Label>
                     <Input type="number" min={1} max={36} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" />
