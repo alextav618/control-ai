@@ -1,10 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +18,6 @@ export const Route = createFileRoute("/app/transactions")({
 });
 
 function todayLocal() {
-  // Retorna a data local no formato YYYY-MM-DD
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -26,14 +25,12 @@ function todayLocal() {
   return `${year}-${month}-${day}`;
 }
 
-/** Calculates the invoice (reference month/year, closing and due dates) for a purchase on a credit card, using local timezone. */
 function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   const day = purchase.getDate();
-  const month = purchase.getMonth(); // 0-11
+  const month = purchase.getMonth();
   const year = purchase.getFullYear();
   
-  // If purchase is after closing, it goes to next invoice
-  let refMonth = month + 1; // 1-12
+  let refMonth = month + 1;
   let refYear = year;
   
   if (day > closingDay) {
@@ -41,10 +38,8 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
     if (refMonth > 12) { refMonth = 1; refYear += 1; }
   }
   
-  // Closing date (in local time)
   const closingDate = new Date(refYear, refMonth - 1, Math.min(closingDay, 28));
   
-  // Due date: if due_day < closing_day, it's usually next month
   let dueYear = refYear;
   let dueMonth = refMonth;
   if (dueDay <= closingDay) { 
@@ -61,17 +56,13 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   };
 }
 
-/** Recomputes the total_amount for an invoice by summing all transactions, invoice_items, and initial_balances */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  // Sum transactions
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
   
-  // Sum invoice items
   const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
   const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
 
-  // Get initial balance
   const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("initial_balance").eq("invoice_id", invoiceId).maybeSingle();
   const initialBalance = Number(initialBalanceData?.initial_balance || 0);
   
@@ -85,6 +76,12 @@ function TxPage() {
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Filters
+  const [search, setSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [filterAccount, setFilterAccount] = useState("all");
+
   const [form, setForm] = useState({
     type: "expense",
     description: "",
@@ -109,7 +106,7 @@ function TxPage() {
       occurred_on: t.occurred_on,
       account_id: t.account_id ?? "",
       category_id: t.category_id ?? "",
-      installments: "1", // Reset installments for edit
+      installments: "1",
     });
     setOpen(true);
   };
@@ -128,67 +125,58 @@ function TxPage() {
           accounts(name, type, closing_day, due_day, archived),
           invoices(id, account_id, reference_month, reference_year)
         `)
-        .eq("accounts.archived", false) // Filtra contas arquivadas
+        .eq("accounts.archived", false)
         .order("occurred_on", { ascending: false })
-        .limit(200);
-      if (error) {
-        console.error("Error fetching transactions:", error);
-        toast.error("Erro ao carregar lançamentos");
-        return [];
-      }
+        .limit(500);
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
   });
 
-  const { data: accounts = [], isLoading: accLoading } = useQuery({
+  const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
-      if (error) {
-        console.error("Error fetching accounts:", error);
-        toast.error("Erro ao carregar contas");
-        return [];
-      }
+      if (error) throw error;
       return data ?? [];
     },
     enabled: !!user,
   });
 
-  const { data: cats = [], isLoading: catLoading } = useQuery({
-    queryKey: ["categories", user?.id, form.type],
+  const { data: cats = [] } = useQuery({
+    queryKey: ["categories", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase.from("categories").select("*");
-      if (error) {
-        console.error("Error fetching categories:", error);
-        toast.error("Erro ao carregar categorias");
-        return [];
-      }
+      if (error) throw error;
       return data ?? [];
     },
     enabled: !!user,
   });
 
+  const filteredTx = useMemo(() => {
+    return tx.filter((t: any) => {
+      const matchesSearch = t.description.toLowerCase().includes(search.toLowerCase());
+      const matchesCategory = filterCategory === "all" || t.category_id === filterCategory;
+      const matchesAccount = filterAccount === "all" || t.account_id === filterAccount;
+      return matchesSearch && matchesCategory && matchesAccount;
+    });
+  }, [tx, search, filterCategory, filterAccount]);
+
   const remove = async (id: string) => {
+    if (!confirm("Excluir este lançamento?")) return;
     const { data: txData } = await supabase.from("transactions").select("invoice_id").eq("id", id).single();
     const invoiceId = txData?.invoice_id;
     
     const { error } = await supabase.from("transactions").delete().eq("id", id);
-    if (error) {
-      console.error("Error deleting transaction:", error);
-      toast.error(error.message);
-      return;
-    }
+    if (error) { toast.error(error.message); return; }
     
-    if (invoiceId) {
-      await recomputeInvoiceTotal(invoiceId);
-    }
+    if (invoiceId) await recomputeInvoiceTotal(invoiceId);
     toast.success("Removido"); 
     qc.invalidateQueries({ queryKey: ["transactions"] }); 
     qc.invalidateQueries({ queryKey: ["dashboard"] }); 
-    qc.invalidateQueries({ queryKey: ["accounts"] }); 
   };
 
   const ensureInvoice = async (account: any, purchaseDate: Date) => {
@@ -212,139 +200,104 @@ function TxPage() {
       status: "open",
       total_amount: 0,
     }).select().single();
-    if (error) { 
-      console.error("Error creating invoice:", error); 
-      toast.error("Erro ao criar fatura para o lançamento");
-      return null; 
-    }
+    if (error) return null;
     return created;
   };
 
   const submit = async () => {
-    if (submitting) return; // previne duplo submit
+    if (submitting) return;
     if (!user || !form.description || !form.amount || !form.account_id) {
       toast.error("Preencha descrição, valor e conta");
       return;
     }
     setSubmitting(true);
     try {
+      const amountNum = Number(form.amount);
+      const occurredDate = new Date(form.occurred_on + "T12:00:00"); 
 
-    const amountNum = Number(form.amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      toast.error("Valor inválido");
-      return;
-    }
-
-    const occurredDate = new Date(form.occurred_on + "T12:00:00"); 
-
-    if (editId) {
-      const { error } = await supabase.from("transactions").update({
-        type: form.type as any,
-        description: form.description,
-        amount: amountNum,
-        occurred_on: form.occurred_on, // Store as YYYY-MM-DD string
-        account_id: form.account_id,
-        category_id: form.category_id || null,
-      }).eq("id", editId);
-      if (error) { 
-        console.error("Error updating transaction:", error); 
-        toast.error(error.message); 
-        return; 
+      if (editId) {
+        const { error } = await supabase.from("transactions").update({
+          type: form.type as any,
+          description: form.description,
+          amount: amountNum,
+          occurred_on: form.occurred_on,
+          account_id: form.account_id,
+          category_id: form.category_id || null,
+        }).eq("id", editId);
+        if (error) throw error;
+        toast.success("Lançamento atualizado");
+        setOpen(false);
+        qc.invalidateQueries({ queryKey: ["transactions"] });
+        return;
       }
-      toast.success("Lançamento atualizado");
+
+      const account = accounts.find((a: any) => a.id === form.account_id);
+      const isCard = account?.type === "credit_card";
+      const installments = Math.max(1, Number(form.installments) || 1);
+      const installmentAmount = +(amountNum / installments).toFixed(2);
+
+      let installmentPlanId: string | null = null;
+      if (installments > 1) {
+        const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
+          user_id: user.id,
+          description: form.description,
+          total_amount: amountNum,
+          installment_amount: installmentAmount,
+          total_installments: installments,
+          account_id: account.id,
+          category_id: form.category_id || null,
+          start_date: form.occurred_on,
+        }).select().single();
+        if (pErr) throw pErr;
+        installmentPlanId = plan.id;
+      }
+
+      const rows: any[] = [];
+      for (let i = 0; i < installments; i++) {
+        const installmentDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
+        const occurred = localDateString(installmentDate); 
+
+        let invoiceId: string | null = null;
+        if (isCard) {
+          const inv = await ensureInvoice(account, installmentDate);
+          invoiceId = inv?.id ?? null;
+        }
+        rows.push({
+          user_id: user.id,
+          type: form.type,
+          description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
+          amount: installmentAmount,
+          occurred_on: occurred,
+          account_id: account.id,
+          category_id: form.category_id || null,
+          installment_plan_id: installmentPlanId,
+          installment_number: installments > 1 ? i + 1 : null,
+          invoice_id: invoiceId,
+          status: "paid", 
+          source: "manual",
+        });
+      }
+
+      const { error } = await supabase.from('transactions').insert(rows);
+      if (error) throw error;
+      
+      const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
+      for (const invId of invoiceIds) await recomputeInvoiceTotal(invId);
+      
+      toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      return;
-    }
-
-    const account = accounts.find((a: any) => a.id === form.account_id);
-    if (!account) {
-      toast.error("Conta não encontrada");
-      return;
-    }
-    const isCard = account.type === "credit_card";
-    const installments = Math.max(1, Number(form.installments) || 1);
-    const installmentAmount = +(amountNum / installments).toFixed(2);
-
-    let installmentPlanId: string | null = null;
-    if (installments > 1) {
-      const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({
-        user_id: user.id,
-        description: form.description,
-        total_amount: amountNum,
-        installment_amount: installmentAmount,
-        total_installments: installments,
-        account_id: account.id,
-        category_id: form.category_id || null,
-        start_date: form.occurred_on,
-      }).select().single();
-      if (pErr) { 
-        console.error("Error creating installment plan:", pErr); 
-        toast.error(pErr.message); 
-        return; 
-      }
-      installmentPlanId = plan.id;
-    }
-
-    const rows: any[] = [];
-    for (let i = 0; i < installments; i++) {
-      const installmentDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
-      const occurred = localDateString(installmentDate); 
-
-      let invoiceId: string | null = null;
-      if (isCard) {
-        const inv = await ensureInvoice(account, installmentDate);
-        invoiceId = inv?.id ?? null;
-      }
-      rows.push({
-        user_id: user.id,
-        type: form.type,
-        description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
-        amount: installmentAmount,
-        occurred_on: occurred,
-        account_id: account.id,
-        category_id: form.category_id || null,
-        fixed_bill_id: null,
-        installment_plan_id: installmentPlanId,
-        installment_number: installments > 1 ? i + 1 : null,
-        invoice_id: invoiceId,
-        status: "paid", 
-        source: "manual",
-      });
-    }
-
-    const { error } = await supabase.from('transactions').insert(rows);
-    if (error) { 
-      console.error("Error inserting transactions:", error); 
-      window.alert(`Falha ao inserir lançamento: ${error.message}`); // Alert para erro de inserção
-      return; 
-    }
-    
-    const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-    for (const invId of invoiceIds) {
-      await recomputeInvoiceTotal(invId);
-    }
-    
-    toast.success(installments > 1 ? `${installments} parcelas lançadas` : "Lançamento criado");
-    setOpen(false);
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-    qc.invalidateQueries({ queryKey: ["accounts"] });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
+    } catch (e: any) {
+      toast.error(e.message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const filteredCats = cats.filter((c: any) => c.kind === form.type);
-  const selectedAccount = accounts.find((a: any) => a.id === form.account_id);
-  const isCardSelected = selectedAccount?.type === "credit_card";
-
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <h1 className="font-display text-2xl md:text-3xl font-bold">Lançamentos</h1>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo</Button></DialogTrigger>
@@ -380,7 +333,7 @@ function TxPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Conta / Cartão</Label>
-                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v, category_id: "" })}>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                     <SelectContent>
                       {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}{a.type === "credit_card" ? " 💳" : ""}</SelectItem>)}
@@ -392,61 +345,102 @@ function TxPage() {
                   <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder="—" /></SelectTrigger>
                     <SelectContent>
-                      {filteredCats.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
+                      {cats.filter((c: any) => c.kind === form.type).map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              {!editId && isCardSelected && Number(form.installments) > 1 && (
-                <p className="text-xs text-muted-foreground bg-surface-2 p-3 rounded-lg">
-                  💳 As parcelas serão distribuídas automaticamente nas próximas {form.installments} faturas, respeitando o fechamento dia {selectedAccount.closing_day}.
-                </p>
-              )}
               <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : (editId ? "Salvar alterações" : "Lançar")}</Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
+      {/* FILTERS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input 
+            placeholder="Buscar descrição..." 
+            value={search} 
+            onChange={(e) => setSearch(e.target.value)} 
+            className="pl-9"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
+              <X className="h-3 w-3 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+        <Select value={filterCategory} onValueChange={setFilterCategory}>
+          <SelectTrigger>
+            <div className="flex items-center gap-2">
+              <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+              <SelectValue placeholder="Categoria" />
+            </div>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas categorias</SelectItem>
+            {cats.map((c: any) => <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={filterAccount} onValueChange={setFilterAccount}>
+          <SelectTrigger>
+            <div className="flex items-center gap-2">
+              <Filter className="h-3.5 w-3.5 text-muted-foreground" />
+              <SelectValue placeholder="Conta" />
+            </div>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas as contas</SelectItem>
+            {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
         {txLoading && <div className="p-8 text-center text-muted-foreground">Carregando lançamentos...</div>}
-        {!txLoading && tx.length === 0 && <div className="p-8 text-center text-muted-foreground">Nenhum lançamento ainda.</div>}
+        {!txLoading && filteredTx.length === 0 && (
+          <div className="p-12 text-center text-muted-foreground">
+            <div className="text-lg font-medium mb-1">Nenhum lançamento encontrado</div>
+            <p className="text-sm">Tente ajustar os filtros ou faça um novo lançamento.</p>
+          </div>
+        )}
         <div className="divide-y divide-border">
-          {tx.map((t: any) => {
+          {filteredTx.map((t: any) => {
             const dot =
               t.audit_level === "green" ? "bg-audit-green" :
               t.audit_level === "yellow" ? "bg-audit-yellow" :
               t.audit_level === "red" ? "bg-audit-red" : "bg-muted";
             return (
-              <div key={t.id} className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors">
+              <div key={t.id} className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
                 <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", dot)} title={t.audit_reason ?? ""} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium truncate">{t.description}</span>
                     {t.installment_number && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-surface-3 text-muted-foreground">parcela {t.installment_number}</span>
-                    )}
-                    {t.invoices && (
-                      <span className="text-xs px-1.5 py-0.5 rounded bg-primary/15 text-primary">fatura</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-muted-foreground font-mono">parcela {t.installment_number}</span>
                     )}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 flex-wrap">
+                  <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 flex-wrap items-center">
                     <span>{formatDateBR(t.occurred_on)}</span>
-                    {t.accounts && <span>· {t.accounts.name}</span>}
-                    {t.categories && <span>· {t.categories.icon} {t.categories.name}</span>}
-                    {t.invoices && t.invoices.accounts && <span>· {t.invoices.accounts.name}</span>}
+                    <span>·</span>
+                    <span className="flex items-center gap-1">{t.accounts?.name}</span>
+                    {t.categories && (
+                      <>
+                        <span>·</span>
+                        <span className="flex items-center gap-1">{t.categories.icon} {t.categories.name}</span>
+                      </>
+                    )}
                   </div>
-                  {t.audit_reason && <div className="text-xs text-muted-foreground/80 mt-1 italic">{t.audit_reason}</div>}
                 </div>
                 <div className={cn("font-mono tabular font-semibold whitespace-nowrap", t.type === "income" ? "text-income" : "text-expense")}>
                   {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => openEdit(t)} title="Editar">
-                  <Pencil className="h-4 w-4 text-muted-foreground" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => remove(t.id)} title="Excluir">
-                  <Trash2 className="h-4 w-4 text-muted-foreground" />
-                </Button>
+                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Button variant="ghost" size="icon" onClick={() => openEdit(t)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                  <Button variant="ghost" size="icon" onClick={() => remove(t.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                </div>
               </div>
             );
           })}
