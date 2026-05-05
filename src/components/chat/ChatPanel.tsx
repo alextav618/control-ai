@@ -40,7 +40,10 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .select("*")
         .order("created_at", { ascending: true })
         .limit(200);
-      if (error) throw error;
+      if (error) {
+        console.error('Erro Supabase (fetch chat messages):', error);
+        throw error;
+      }
       return data as Msg[];
     },
     enabled: !!user,
@@ -81,7 +84,8 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       rec.start();
       recRef.current = rec;
       setRecording(true);
-    } catch {
+    } catch (e) {
+      console.error('Erro ao acessar microfone:', e);
       toast.error("Não foi possível acessar o microfone");
     }
   };
@@ -118,7 +122,9 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         const ext = blob.type.split("/")[1] ?? "jpg";
         const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, blob);
-        if (!upErr) {
+        if (upErr) {
+          console.error('Erro Supabase (upload image):', upErr);
+        } else {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
           attachmentUrl = signed?.signedUrl ?? null;
           attachmentType = "image";
@@ -130,7 +136,9 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         const ext = audioBlob.type.includes("webm") ? "webm" : "mp4";
         const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, audioBlob);
-        if (!upErr) {
+        if (upErr) {
+          console.error('Erro Supabase (upload audio):', upErr);
+        } else {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
           attachmentUrl = signed?.signedUrl ?? null;
           attachmentType = "audio";
@@ -150,7 +158,11 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         })
         .select()
         .single();
-      if (insErr) throw insErr;
+      
+      if (insErr) {
+        console.error('Erro Supabase (insert user message):', insErr);
+        throw insErr;
+      }
 
       const history = messages.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
@@ -162,11 +174,12 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
           audioBase64, 
           audioMime, 
           history,
-          localDate: localDateString() // FIX: Send local date to AI
+          localDate: localDateString()
         },
       });
 
       if (error) {
+        console.error('Erro Edge Function (chat-ai):', error);
         const errMsg = (error as any)?.context?.body
           ? (typeof (error as any).context.body === "string" ? (error as any).context.body : JSON.stringify((error as any).context.body))
           : error.message;
@@ -175,7 +188,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       }
 
       const assistantText = data?.message || "Ok.";
-      const { data: aMsg } = await supabase
+      const { data: aMsg, error: aInsErr } = await supabase
         .from("chat_messages")
         .insert({
           user_id: user.id,
@@ -186,7 +199,12 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .select()
         .single();
 
-      qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, aMsg as Msg]);
+      if (aInsErr) {
+        console.error('Erro Supabase (insert assistant message):', aInsErr);
+      } else {
+        qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, aMsg as Msg]);
+      }
+      
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -198,7 +216,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       setImageData(null);
       setAudioBlob(null);
     } catch (e) {
-      console.error(e);
+      console.error('Erro no fluxo de envio do chat:', e);
     } finally {
       setSending(false);
     }
