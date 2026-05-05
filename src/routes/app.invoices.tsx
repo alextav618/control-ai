@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Check, CreditCard, AlertCircle, Plus, Trash2, ChevronDown, ChevronUp, Receipt } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -19,6 +19,9 @@ export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
 });
 
+/** 
+ * Recalcula o total_amount de uma fatura somando transações, itens extras e o saldo inicial.
+ */
 const recomputeInvoiceTotal = async (invoiceId: string) => {
   const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
   const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
@@ -36,14 +39,20 @@ const recomputeInvoiceTotal = async (invoiceId: string) => {
 function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  
+  // Estados para Modais
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
+  
   const [itemDialog, setItemDialog] = useState(false);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
-  const [initialBalanceDialog, setInitialBalanceDialog] = useState(false);
-  const [initialBalanceForm, setInitialBalanceForm] = useState({ invoice_id: "", initial_balance: "" });
+  
+  const [adjDialog, setAdjDialog] = useState(false);
+  const [editingAdj, setEditingAdj] = useState<any>(null);
+  const [adjForm, setAdjForm] = useState({ invoice_id: "", initial_balance: "" });
 
+  // Queries
   const { data: invoices = [] } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
@@ -71,7 +80,10 @@ function InvoicesPage() {
   const { data: initialBalances = [] } = useQuery({
     queryKey: ["initial_balances", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("invoice_initial_balances").select("*");
+      const { data, error } = await supabase
+        .from("invoice_initial_balances")
+        .select("*, invoices(reference_month, reference_year, accounts(name))")
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -80,6 +92,7 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
+  // Ações
   const confirmPay = async () => {
     if (!user || !payInv || !payAccount) return;
     const initialBalance = initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0;
@@ -104,7 +117,7 @@ function InvoicesPage() {
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["accounts"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const saveItem = async () => {
@@ -124,31 +137,61 @@ function InvoicesPage() {
     toast.success("Item adicionado");
     setItemDialog(false);
     qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
-  const saveInitialBalance = async () => {
-    if (!user || !initialBalanceForm.invoice_id || !initialBalanceForm.initial_balance) return;
+  const openEditAdj = (adj: any) => {
+    setEditingAdj(adj);
+    setAdjForm({ invoice_id: adj.invoice_id, initial_balance: String(adj.initial_balance) });
+    setAdjDialog(true);
+  };
+
+  const saveAdjustment = async () => {
+    if (!user || !adjForm.invoice_id || !adjForm.initial_balance) return;
     const { error } = await supabase.from("invoice_initial_balances").upsert({
       user_id: user.id,
-      invoice_id: initialBalanceForm.invoice_id,
-      initial_balance: Number(initialBalanceForm.initial_balance),
+      invoice_id: adjForm.invoice_id,
+      initial_balance: Number(adjForm.initial_balance),
     }, { onConflict: "invoice_id" });
+    
     if (error) { toast.error(error.message); return; }
-    await recomputeInvoiceTotal(initialBalanceForm.invoice_id);
-    toast.success("Saldo inicial salvo");
-    setInitialBalanceDialog(false);
+    
+    await recomputeInvoiceTotal(adjForm.invoice_id);
+    toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
+    setAdjDialog(false);
+    setEditingAdj(null);
+    qc.invalidateQueries({ queryKey: ["initial_balances"] });
     qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+
+  const deleteAdjustment = async (adj: any) => {
+    if (!confirm("Excluir este ajuste de saldo inicial? O total da fatura será recalculado.")) return;
+    const { error } = await supabase.from("invoice_initial_balances").delete().eq("id", adj.id);
+    if (error) { toast.error(error.message); return; }
+    
+    await recomputeInvoiceTotal(adj.invoice_id);
+    toast.success("Ajuste excluído");
+    qc.invalidateQueries({ queryKey: ["initial_balances"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const openInvoices = invoices.filter((i: any) => i.status !== "paid");
   const paidInvoices = invoices.filter((i: any) => i.status === "paid");
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-      <h1 className="font-display text-2xl md:text-3xl font-bold mb-6">Faturas</h1>
+    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300 space-y-10">
+      <div>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
+        <p className="text-sm text-muted-foreground mt-1">Gerencie seus cartões de crédito e pagamentos.</p>
+      </div>
 
-      <section className="mb-10">
-        <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Em aberto ({openInvoices.length})</h2>
+      {/* FATURAS EM ABERTO */}
+      <section>
+        <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto ({openInvoices.length})
+        </h2>
         {openInvoices.length === 0 ? (
           <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">
             Nenhuma fatura em aberto 🎉
@@ -162,16 +205,66 @@ function InvoicesPage() {
                 initialBalances={initialBalances}
                 onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
                 onAddItem={() => { setPayInv(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
-                onSetInitialBalance={() => { setInitialBalanceDialog(true); setInitialBalanceForm({ invoice_id: inv.id, initial_balance: "" }); }}
+                onSetInitialBalance={() => { setAdjForm({ invoice_id: inv.id, initial_balance: "" }); setAdjDialog(true); }}
               />
             ))}
           </div>
         )}
       </section>
 
+      {/* GERENCIAMENTO DE AJUSTES */}
+      <section>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display font-semibold text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+            <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
+          </h2>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
+          {initialBalances.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Nenhum ajuste manual lançado.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-surface-2/50 border-b border-border">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Cartão / Mês</th>
+                    <th className="px-4 py-3 font-semibold">Valor do Ajuste</th>
+                    <th className="px-4 py-3 font-semibold text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {initialBalances.map((adj: any) => (
+                    <tr key={adj.id} className="hover:bg-surface-2/30 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium">{adj.invoices?.accounts?.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {monthNames[(adj.invoices?.reference_month || 1) - 1]}/{adj.invoices?.reference_year}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.initial_balance))}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Button variant="ghost" size="icon" onClick={() => openEditAdj(adj)} title="Editar">
+                            <Pencil className="h-4 w-4 text-muted-foreground" />
+                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)} title="Excluir">
+                            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* FATURAS PAGAS */}
       {paidInvoices.length > 0 && (
         <section>
-          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Pagas</h2>
+          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas</h2>
           <div className="space-y-4">
             {paidInvoices.slice(0, 6).map((inv: any) => (
               <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} />
@@ -180,9 +273,13 @@ function InvoicesPage() {
         </section>
       )}
 
-      <Dialog open={!!payInv && !itemDialog} onOpenChange={(v) => !v && setPayInv(null)}>
+      {/* MODAL PAGAMENTO */}
+      <Dialog open={!!payInv && !itemDialog && !adjDialog} onOpenChange={(v) => !v && setPayInv(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Pagar fatura</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Pagar fatura</DialogTitle>
+            <DialogDescription>Confirme o pagamento total desta fatura.</DialogDescription>
+          </DialogHeader>
           {payInv && (
             <div className="space-y-4">
               <div className="rounded-xl bg-surface-2 p-4 border border-border">
@@ -212,6 +309,7 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* MODAL ITEM EXTRA */}
       <Dialog open={itemDialog} onOpenChange={setItemDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar item extra</DialogTitle></DialogHeader>
@@ -226,12 +324,45 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={initialBalanceDialog} onOpenChange={setInitialBalanceDialog}>
+      {/* MODAL AJUSTE / SALDO INICIAL */}
+      <Dialog open={adjDialog} onOpenChange={(v) => { setAdjDialog(v); if(!v) setEditingAdj(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Saldo inicial da fatura</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle>
+            <DialogDescription>
+              O saldo inicial é somado ao total da fatura para ajustes manuais ou migração de dados.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
-            <div><Label>Valor (R$)</Label><Input type="number" step="0.01" value={initialBalanceForm.initial_balance} onChange={(e) => setInitialBalanceForm({ ...initialBalanceForm, initial_balance: e.target.value })} className="mt-1.5" /></div>
-            <Button onClick={saveInitialBalance} className="w-full">Salvar</Button>
+            {!editingAdj && (
+              <div>
+                <Label>Fatura de Referência</Label>
+                <Select value={adjForm.invoice_id} onValueChange={(v) => setAdjForm({ ...adjForm, invoice_id: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a fatura" /></SelectTrigger>
+                  <SelectContent>
+                    {invoices.filter((i: any) => i.status !== "paid").map((inv: any) => (
+                      <SelectItem key={inv.id} value={inv.id}>
+                        {inv.accounts?.name} ({monthNames[inv.reference_month - 1]}/{inv.reference_year})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <div>
+              <Label>Valor do Ajuste (R$)</Label>
+              <Input 
+                type="number" 
+                step="0.01" 
+                value={adjForm.initial_balance} 
+                onChange={(e) => setAdjForm({ ...adjForm, initial_balance: e.target.value })} 
+                className="mt-1.5" 
+                placeholder="Ex: 150.00"
+              />
+            </div>
+            <Button onClick={saveAdjustment} className="w-full">
+              {editingAdj ? "Salvar Alterações" : "Criar Ajuste"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
