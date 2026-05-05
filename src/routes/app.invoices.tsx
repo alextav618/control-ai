@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2 } from "lucide-react";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -19,28 +19,11 @@ export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
 });
 
-/** 
- * Recalcula o total_amount de uma fatura somando transações, itens extras e o saldo inicial.
- */
-const recomputeInvoiceTotal = async (invoiceId: string) => {
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
-  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-  
-  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
-  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-
-  const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("initial_balance").eq("invoice_id", invoiceId).maybeSingle();
-  const initialBalance = Number(initialBalanceData?.initial_balance || 0);
-  
-  const total = txTotal + itemsTotal + initialBalance;
-  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
-};
-
 function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   
-  // Estados para Modais
+  // Modals state
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
@@ -50,10 +33,10 @@ function InvoicesPage() {
   
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
-  const [adjForm, setAdjForm] = useState({ invoice_id: "", initial_balance: "" });
+  const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
 
   // Queries
-  const { data: invoices = [] } = useQuery({
+  const { data: invoices = [], isLoading: invLoading } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -77,7 +60,7 @@ function InvoicesPage() {
     enabled: !!user,
   });
 
-  const { data: initialBalances = [] } = useQuery({
+  const { data: initialBalances = [], isLoading: adjLoading } = useQuery({
     queryKey: ["initial_balances", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -92,11 +75,16 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
-  // Ações
+  // Actions
+  const triggerRecompute = async (invoiceId: string) => {
+    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+  };
+
   const confirmPay = async () => {
     if (!user || !payInv || !payAccount) return;
-    const initialBalance = initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0;
-    const totalAmount = Number(payInv.total_amount) + initialBalance;
+    const totalAmount = Number(payInv.total_amount);
 
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
@@ -133,36 +121,38 @@ function InvoicesPage() {
       amount: qty * unit,
     });
     if (error) { toast.error(error.message); return; }
-    await recomputeInvoiceTotal(payInv.id);
+    await triggerRecompute(payInv.id);
     toast.success("Item adicionado");
     setItemDialog(false);
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const openEditAdj = (adj: any) => {
     setEditingAdj(adj);
-    setAdjForm({ invoice_id: adj.invoice_id, initial_balance: String(adj.initial_balance) });
+    setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) });
     setAdjDialog(true);
   };
 
   const saveAdjustment = async () => {
-    if (!user || !adjForm.invoice_id || !adjForm.initial_balance) return;
-    const { error } = await supabase.from("invoice_initial_balances").upsert({
+    if (!user || !adjForm.invoice_id || !adjForm.amount) return;
+    
+    const payload: any = {
       user_id: user.id,
       invoice_id: adjForm.invoice_id,
-      initial_balance: Number(adjForm.initial_balance),
-    }, { onConflict: "invoice_id" });
+      amount: Number(adjForm.amount),
+      month_year: `${invoices.find(i => i.id === adjForm.invoice_id)?.reference_month}/${invoices.find(i => i.id === adjForm.invoice_id)?.reference_year}`
+    };
+
+    if (editingAdj) payload.id = editingAdj.id;
+
+    const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
     
     if (error) { toast.error(error.message); return; }
     
-    await recomputeInvoiceTotal(adjForm.invoice_id);
+    await triggerRecompute(adjForm.invoice_id);
     toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
     setAdjDialog(false);
     setEditingAdj(null);
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const deleteAdjustment = async (adj: any) => {
@@ -170,11 +160,9 @@ function InvoicesPage() {
     const { error } = await supabase.from("invoice_initial_balances").delete().eq("id", adj.id);
     if (error) { toast.error(error.message); return; }
     
-    await recomputeInvoiceTotal(adj.invoice_id);
+    await triggerRecompute(adj.invoice_id);
     toast.success("Ajuste excluído");
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const openInvoices = invoices.filter((i: any) => i.status !== "paid");
@@ -182,9 +170,14 @@ function InvoicesPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300 space-y-10">
-      <div>
-        <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
-        <p className="text-sm text-muted-foreground mt-1">Gerencie seus cartões de crédito e pagamentos.</p>
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
+          <p className="text-sm text-muted-foreground mt-1">Gerencie seus cartões de crédito e pagamentos.</p>
+        </div>
+        <Button onClick={() => { setEditingAdj(null); setAdjForm({ invoice_id: "", amount: "" }); setAdjDialog(true); }} variant="outline">
+          <Plus className="h-4 w-4 mr-2" /> Novo Ajuste
+        </Button>
       </div>
 
       {/* FATURAS EM ABERTO */}
@@ -192,7 +185,9 @@ function InvoicesPage() {
         <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto ({openInvoices.length})
         </h2>
-        {openInvoices.length === 0 ? (
+        {invLoading ? (
+          <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        ) : openInvoices.length === 0 ? (
           <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">
             Nenhuma fatura em aberto 🎉
           </div>
@@ -202,25 +197,23 @@ function InvoicesPage() {
               <InvCard
                 key={inv.id}
                 inv={inv}
-                initialBalances={initialBalances}
                 onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
                 onAddItem={() => { setPayInv(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
-                onSetInitialBalance={() => { setAdjForm({ invoice_id: inv.id, initial_balance: "" }); setAdjDialog(true); }}
               />
             ))}
           </div>
         )}
       </section>
 
-      {/* GERENCIAMENTO DE AJUSTES */}
+      {/* LISTAGEM DE AJUSTES */}
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-display font-semibold text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-            <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
-          </h2>
-        </div>
+        <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+          <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
+        </h2>
         <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
-          {initialBalances.length === 0 ? (
+          {adjLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : initialBalances.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">Nenhum ajuste manual lançado.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -236,12 +229,12 @@ function InvoicesPage() {
                   {initialBalances.map((adj: any) => (
                     <tr key={adj.id} className="hover:bg-surface-2/30 transition-colors">
                       <td className="px-4 py-3">
-                        <div className="font-medium">{adj.invoices?.accounts?.name}</div>
+                        <div className="font-medium">{adj.invoices?.accounts?.name || "Fatura removida"}</div>
                         <div className="text-xs text-muted-foreground">
-                          {monthNames[(adj.invoices?.reference_month || 1) - 1]}/{adj.invoices?.reference_year}
+                          {adj.invoices ? `${monthNames[adj.invoices.reference_month - 1]}/${adj.invoices.reference_year}` : adj.month_year}
                         </div>
                       </td>
-                      <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.initial_balance))}</td>
+                      <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button variant="ghost" size="icon" onClick={() => openEditAdj(adj)} title="Editar">
@@ -267,7 +260,7 @@ function InvoicesPage() {
           <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas</h2>
           <div className="space-y-4">
             {paidInvoices.slice(0, 6).map((inv: any) => (
-              <InvCard key={inv.id} inv={inv} initialBalances={initialBalances} />
+              <InvCard key={inv.id} inv={inv} />
             ))}
           </div>
         </section>
@@ -284,9 +277,7 @@ function InvoicesPage() {
             <div className="space-y-4">
               <div className="rounded-xl bg-surface-2 p-4 border border-border">
                 <div className="text-xs text-muted-foreground">{payInv.accounts?.name}</div>
-                <div className="font-mono tabular text-2xl font-bold mt-1">
-                  {formatBRL(Number(payInv.total_amount) + (initialBalances.find((b: any) => b.invoice_id === payInv.id)?.initial_balance || 0))}
-                </div>
+                <div className="font-mono tabular text-2xl font-bold mt-1">{formatBRL(Number(payInv.total_amount))}</div>
               </div>
               <div>
                 <Label>Pagar com</Label>
@@ -330,7 +321,7 @@ function InvoicesPage() {
           <DialogHeader>
             <DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle>
             <DialogDescription>
-              O saldo inicial é somado ao total da fatura para ajustes manuais ou migração de dados.
+              O saldo inicial é somado ao total da fatura para ajustes manuais.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -340,7 +331,7 @@ function InvoicesPage() {
                 <Select value={adjForm.invoice_id} onValueChange={(v) => setAdjForm({ ...adjForm, invoice_id: v })}>
                   <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a fatura" /></SelectTrigger>
                   <SelectContent>
-                    {invoices.filter((i: any) => i.status !== "paid").map((inv: any) => (
+                    {invoices.map((inv: any) => (
                       <SelectItem key={inv.id} value={inv.id}>
                         {inv.accounts?.name} ({monthNames[inv.reference_month - 1]}/{inv.reference_year})
                       </SelectItem>
@@ -354,8 +345,8 @@ function InvoicesPage() {
               <Input 
                 type="number" 
                 step="0.01" 
-                value={adjForm.initial_balance} 
-                onChange={(e) => setAdjForm({ ...adjForm, initial_balance: e.target.value })} 
+                value={adjForm.amount} 
+                onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} 
                 className="mt-1.5" 
                 placeholder="Ex: 150.00"
               />
@@ -370,19 +361,18 @@ function InvoicesPage() {
   );
 }
 
-function InvCard({ inv, onPay, onAddItem, onSetInitialBalance, initialBalances }: any) {
+function InvCard({ inv, onPay, onAddItem }: any) {
   const [expanded, setExpanded] = useState(false);
-  const initialBalance = initialBalances?.find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-  const total = Number(inv.total_amount) + initialBalance;
 
   const { data: details } = useQuery({
     queryKey: ["invoice-details", inv.id],
     queryFn: async () => {
-      const [txR, itemsR] = await Promise.all([
+      const [txR, itemsR, adjR] = await Promise.all([
         supabase.from("transactions").select("*, categories(name, icon)").eq("invoice_id", inv.id).order("occurred_on"),
         supabase.from("invoice_items").select("*").eq("invoice_id", inv.id),
+        supabase.from("invoice_initial_balances").select("*").eq("invoice_id", inv.id).maybeSingle(),
       ]);
-      return { transactions: txR.data ?? [], items: itemsR.data ?? [] };
+      return { transactions: txR.data ?? [], items: itemsR.data ?? [], adjustment: adjR.data };
     },
     enabled: expanded,
   });
@@ -398,7 +388,7 @@ function InvCard({ inv, onPay, onAddItem, onSetInitialBalance, initialBalances }
           <div className="text-xs text-muted-foreground mt-0.5">
             {monthNames[inv.reference_month - 1]}/{inv.reference_year} · vence {formatDateBR(inv.due_date)}
           </div>
-          <div className="mt-2 font-mono tabular text-xl font-bold">{formatBRL(total)}</div>
+          <div className="mt-2 font-mono tabular text-xl font-bold">{formatBRL(Number(inv.total_amount))}</div>
         </div>
         <div className="flex flex-col gap-2">
           {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>}
@@ -412,17 +402,14 @@ function InvCard({ inv, onPay, onAddItem, onSetInitialBalance, initialBalances }
         <div className="border-t border-border bg-surface-2/30 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Detalhamento</h3>
-            <div className="flex gap-2">
-              {onSetInitialBalance && <Button size="xs" variant="outline" onClick={onSetInitialBalance} className="h-7 text-[10px]">Saldo inicial</Button>}
-              {onAddItem && <Button size="xs" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
-            </div>
+            {onAddItem && <Button size="xs" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
           </div>
 
           <div className="space-y-1">
-            {initialBalance !== 0 && (
+            {details?.adjustment && (
               <div className="flex items-center justify-between py-1.5 text-sm border-b border-border/50 border-dashed">
                 <span className="text-muted-foreground italic">Saldo inicial / Ajuste</span>
-                <span className="font-mono tabular">{formatBRL(initialBalance)}</span>
+                <span className="font-mono tabular">{formatBRL(Number(details.adjustment.amount))}</span>
               </div>
             )}
             {details?.transactions.map((t: any) => (
@@ -444,7 +431,7 @@ function InvCard({ inv, onPay, onAddItem, onSetInitialBalance, initialBalances }
               </div>
             ))}
             {!details && <div className="text-center py-4 text-xs text-muted-foreground">Carregando...</div>}
-            {details && details.transactions.length === 0 && details.items.length === 0 && initialBalance === 0 && (
+            {details && details.transactions.length === 0 && details.items.length === 0 && !details.adjustment && (
               <div className="text-center py-4 text-xs text-muted-foreground">Nenhum item nesta fatura.</div>
             )}
           </div>
