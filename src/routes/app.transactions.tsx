@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet, Landmark, Coins, Banknote } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,14 @@ const PAYMENT_METHODS = [
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
 ];
+
+const ACCOUNT_TYPE_LABELS: Record<string, string> = {
+  checking: "C. Corrente",
+  savings: "Poupança",
+  cash: "Dinheiro",
+  credit_card: "Cartão",
+  other: "Outro",
+};
 
 function todayLocal() {
   const date = new Date();
@@ -107,7 +115,7 @@ function TxPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
+      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false).order("name");
       if (error) throw error;
       return data ?? [];
     },
@@ -305,7 +313,13 @@ function TxPage() {
                       <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                       <SelectContent>
                         {(activeFormTab === "credit" ? creditCards : cashAccounts).map((a: any) => (
-                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                          <SelectItem key={a.id} value={a.id}>
+                            <div className="flex items-center gap-2">
+                              <span>{a.icon || (a.type === 'credit_card' ? "💳" : "🏦")}</span>
+                              <span className="truncate">{a.name}</span>
+                              <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
+                            </div>
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -342,7 +356,15 @@ function TxPage() {
                         <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
                           <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                           <SelectContent>
-                            {accounts.filter(a => a.id !== form.account_id).map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                            {accounts.filter(a => a.id !== form.account_id).map((a: any) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                <div className="flex items-center gap-2">
+                                  <span>{a.icon || "🏦"}</span>
+                                  <span className="truncate">{a.name}</span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
+                                </div>
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
