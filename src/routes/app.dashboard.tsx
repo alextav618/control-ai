@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString, formatDateBR } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -33,7 +33,7 @@ function Dashboard() {
       const futureLimitDate = new Date(year, now.getMonth() + 4, 0);
       const futureLimit = localDateString(futureLimitDate);
 
-      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR, auditR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
         supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
         supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
@@ -45,6 +45,7 @@ function Dashboard() {
         supabase.from("investment_assets").select("*").eq("archived", false),
         supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false }),
         supabase.from("investment_movements").select("*"),
+        supabase.from("audit_log").select("level").gte("created_at", monthStart),
       ]);
       return {
         accounts: accR.data ?? [],
@@ -58,6 +59,7 @@ function Dashboard() {
         assets: assetsR.data ?? [],
         snapshots: snapsR.data ?? [],
         movements: movR.data ?? [],
+        audit: auditR.data ?? [],
       };
     },
     enabled: !!user,
@@ -101,6 +103,17 @@ function Dashboard() {
   }, 0);
 
   const netWorth = totalCashBalance + portfolioValue - totalCardDebt;
+
+  const auditSummary = useMemo(() => {
+    if (!data?.audit) return { green: 0, yellow: 0, red: 0, total: 0 };
+    const counts = { green: 0, yellow: 0, red: 0, total: data.audit.length };
+    data.audit.forEach((a: any) => {
+      if (a.level === 'green') counts.green++;
+      else if (a.level === 'yellow') counts.yellow++;
+      else if (a.level === 'red') counts.red++;
+    });
+    return counts;
+  }, [data]);
 
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
@@ -217,9 +230,9 @@ function Dashboard() {
         </DialogContent>
       </Dialog>
 
-      {/* Budget Progress */}
-      {budget > 0 && (
-        <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card">
+      {/* Audit Health Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Target className="h-4 w-4 text-primary" />
@@ -235,7 +248,27 @@ function Dashboard() {
             <span>{formatBRL(budget - expense)} restante</span>
           </div>
         </div>
-      )}
+        
+        <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Saúde da Auditoria</span>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:translate-x-1 transition-transform" />
+          </div>
+          <div className="flex items-center gap-1.5 h-2 rounded-full bg-surface-2 overflow-hidden">
+            <div className="h-full bg-audit-green" style={{ width: `${auditSummary.total > 0 ? (auditSummary.green / auditSummary.total) * 100 : 0}%` }} />
+            <div className="h-full bg-audit-yellow" style={{ width: `${auditSummary.total > 0 ? (auditSummary.yellow / auditSummary.total) * 100 : 0}%` }} />
+            <div className="h-full bg-audit-red" style={{ width: `${auditSummary.total > 0 ? (auditSummary.red / auditSummary.total) * 100 : 0}%` }} />
+          </div>
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground uppercase tracking-wider">
+            <span className="text-audit-green">{auditSummary.green} ok</span>
+            <span className="text-audit-yellow">{auditSummary.yellow} atenção</span>
+            <span className="text-audit-red">{auditSummary.red} crítico</span>
+          </div>
+        </Link>
+      </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
