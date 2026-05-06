@@ -24,8 +24,8 @@ const PAYMENT_METHODS = [
   { value: "transferencia", label: "Transferência" },
   { value: "boleto", label: "Boleto" },
   { value: "debito", label: "Débito" },
-  { value: "credito", label: "Crédito" },
-  { value: "dinheiro", label: "Dinheiro" }, // Adicionado Dinheiro
+  // { value: "credito", label: "Crédito" }, // Removido para evitar redundância com a aba de cartões
+  { value: "dinheiro", label: "Dinheiro" },
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
 ];
