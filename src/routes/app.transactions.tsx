@@ -225,6 +225,9 @@ function TxPage() {
   const creditCards = accounts.filter(a => a.type === "credit_card");
 
   const filteredPaymentMethods = useMemo(() => {
+    if (form.type === "transfer") {
+      return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
+    }
     if (form.type === "income") {
       return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito"].includes(m.value));
     }
