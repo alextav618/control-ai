@@ -57,14 +57,22 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
 }
 
 const recomputeInvoiceTotal = async (invoiceId: string) => {
-  const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
-  const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-  const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
-  const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount), 0);
-  const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("amount").eq("invoice_id", invoiceId).maybeSingle();
-  const initialBalance = Number(initialBalanceData?.amount || 0);
-  const total = txTotal + itemsTotal + initialBalance;
-  await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
+  try {
+    const { data: txs } = await supabase.from("transactions").select("amount").eq("invoice_id", invoiceId);
+    const txTotal = (txs || []).reduce((sum, tx) => sum + Number(tx.amount || 0), 0);
+    
+    const { data: items } = await supabase.from("invoice_items").select("amount").eq("invoice_id", invoiceId);
+    const itemsTotal = (items || []).reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    
+    const { data: initialBalanceData } = await supabase.from("invoice_initial_balances").select("amount").eq("invoice_id", invoiceId).maybeSingle();
+    const initialBalance = Number(initialBalanceData?.amount || 0);
+    
+    const total = txTotal + itemsTotal + initialBalance;
+    
+    await supabase.from("invoices").update({ total_amount: total }).eq("id", invoiceId);
+  } catch (err) {
+    console.error("Erro ao recalcular total da fatura:", err);
+  }
 };
 
 function TxPage() {
@@ -127,7 +135,11 @@ function TxPage() {
         `)
         .order("occurred_on", { ascending: false })
         .limit(500);
-      if (error) throw error;
+      
+      if (error) {
+        console.error("Erro ao carregar lançamentos:", error);
+        throw error;
+      }
       return data;
     },
     enabled: !!user,
@@ -403,7 +415,13 @@ function TxPage() {
 
       <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
         {txLoading && <div className="p-8 text-center text-muted-foreground">Carregando lançamentos...</div>}
-        {txError && <div className="p-8 text-center text-destructive">Erro ao carregar dados. Tente atualizar a página.</div>}
+        {txError && (
+          <div className="p-8 text-center text-destructive">
+            <div className="font-semibold">Erro ao carregar dados</div>
+            <p className="text-xs mt-1">Verifique o console do navegador para mais detalhes.</p>
+            <Button variant="outline" size="sm" onClick={() => refetch()} className="mt-4">Tentar novamente</Button>
+          </div>
+        )}
         {!txLoading && !txError && filteredTx.length === 0 && (
           <div className="p-12 text-center text-muted-foreground">
             <div className="text-lg font-medium mb-1">Nenhum lançamento encontrado</div>
