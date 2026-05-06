@@ -356,7 +356,7 @@ function TxPage() {
                         <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
                           <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                           <SelectContent>
-                            {accounts.filter(a => a.id !== form.account_id).map((a: any) => (
+                            {cashAccounts.filter(a => a.id !== form.account_id).map((a: any) => (
                               <SelectItem key={a.id} value={a.id}>
                                 <div className="flex items-center gap-2">
                                   <span>{a.icon || "🏦"}</span>
