@@ -126,6 +126,8 @@ function TxPage() {
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       if (!user) return [];
+      // REMOVIDO .eq("user_id", user.id) pois o RLS já cuida disso.
+      // Isso evita problemas se houver qualquer divergência de tipo ou sessão.
       const { data, error } = await supabase
         .from("transactions")
         .select(`
@@ -134,7 +136,6 @@ function TxPage() {
           accounts(name, type, closing_day, due_day, archived),
           invoices(id, account_id, reference_month, reference_year)
         `)
-        .eq("user_id", user.id)
         .order("occurred_on", { ascending: false })
         .limit(500);
       if (error) {
