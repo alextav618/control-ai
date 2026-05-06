@@ -25,6 +25,7 @@ const PAYMENT_METHODS = [
   { value: "boleto", label: "Boleto" },
   { value: "debito", label: "Débito" },
   { value: "credito", label: "Crédito" },
+  { value: "dinheiro", label: "Dinheiro" }, // Adicionado Dinheiro
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
 ];
@@ -237,9 +238,10 @@ function TxPage() {
       return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
     }
     if (form.type === "income") {
-      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito"].includes(m.value));
+      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value)); // Adicionado Dinheiro para Receita
     }
-    return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "boleto", "debito", "saque"].includes(m.value));
+    // Para despesas, inclui todas as opções, incluindo Dinheiro
+    return PAYMENT_METHODS.filter(m => m.value !== "deposito"); // Remove depósito das despesas
   }, [form.type]);
 
   return (
@@ -381,15 +383,15 @@ function TxPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Receitas</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Receitas</div>
           <div className="font-mono font-bold text-lg tabular text-income">{formatBRL(summary.income)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Despesas</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Despesas</div>
           <div className="font-mono font-bold text-lg tabular text-expense">{formatBRL(summary.expense)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Saldo</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Saldo</div>
           <div className="font-mono font-bold text-lg tabular">{formatBRL(summary.balance)}</div>
         </div>
       </div>
