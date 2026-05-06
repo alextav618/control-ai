@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -125,7 +125,6 @@ function TxPage() {
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       if (!user) return [];
-      // Simplificando o select para evitar erros de join se o esquema estiver diferente
       const { data, error } = await supabase
         .from("transactions")
         .select(`
@@ -177,6 +176,22 @@ function TxPage() {
       return matchesSearch && matchesCategory && matchesAccount && matchesType;
     });
   }, [tx, search, filterCategory, filterAccount, filterType]);
+
+  const summary = useMemo(() => {
+    const income = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+    const expense = filteredTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+    return { income, expense, balance: income - expense };
+  }, [filteredTx]);
+
+  const groupedTx = useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    filteredTx.forEach(t => {
+      const date = t.occurred_on;
+      if (!groups[date]) groups[date] = [];
+      groups[date].push(t);
+    });
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [filteredTx]);
 
   const clearFilters = () => {
     setSearch("");
@@ -376,6 +391,37 @@ function TxPage() {
         </Dialog>
       </div>
 
+      {/* SUMMARY BAR */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="rounded-2xl border border-border bg-surface-1 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-income/10 flex items-center justify-center text-income"><TrendingUp className="h-5 w-5" /></div>
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Receitas</div>
+              <div className="font-mono font-bold text-lg tabular text-income">{formatBRL(summary.income)}</div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface-1 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-expense/10 flex items-center justify-center text-expense"><TrendingDown className="h-5 w-5" /></div>
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Despesas</div>
+              <div className="font-mono font-bold text-lg tabular text-expense">{formatBRL(summary.expense)}</div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border bg-surface-1 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-xl bg-primary/10 flex items-center justify-center text-primary"><Calculator className="h-5 w-5" /></div>
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Saldo</div>
+              <div className="font-mono font-bold text-lg tabular">{formatBRL(summary.balance)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* FILTERS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <div className="relative">
@@ -413,7 +459,7 @@ function TxPage() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
+      <div className="space-y-8">
         {txLoading && <div className="p-8 text-center text-muted-foreground">Carregando lançamentos...</div>}
         {txError && (
           <div className="p-8 text-center text-destructive">
@@ -423,45 +469,49 @@ function TxPage() {
           </div>
         )}
         {!txLoading && !txError && filteredTx.length === 0 && (
-          <div className="p-12 text-center text-muted-foreground">
+          <div className="p-12 text-center text-muted-foreground rounded-2xl border border-border bg-surface-1">
             <div className="text-lg font-medium mb-1">Nenhum lançamento encontrado</div>
             <p className="text-sm">Tente ajustar os filtros ou faça um novo lançamento.</p>
           </div>
         )}
-        <div className="divide-y divide-border">
-          {filteredTx.map((t: any) => {
-            const dot = t.audit_level === "green" ? "bg-audit-green" : t.audit_level === "yellow" ? "bg-audit-yellow" : t.audit_level === "red" ? "bg-audit-red" : "bg-muted";
-            return (
-              <div key={t.id} className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
-                <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", dot)} title={t.audit_reason ?? ""} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium truncate">{t.description || "Sem descrição"}</span>
-                    {t.installment_number && <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-muted-foreground font-mono">parcela {t.installment_number}</span>}
+        
+        {groupedTx.map(([date, items]) => (
+          <div key={date} className="space-y-2">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">{formatDateBR(date)}</h3>
+            <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden divide-y divide-border">
+              {items.map((t: any) => {
+                const dot = t.audit_level === "green" ? "bg-audit-green" : t.audit_level === "yellow" ? "bg-audit-yellow" : t.audit_level === "red" ? "bg-audit-red" : "bg-muted";
+                return (
+                  <div key={t.id} className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
+                    <span className={cn("h-2.5 w-2.5 rounded-full shrink-0", dot)} title={t.audit_reason ?? ""} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium truncate">{t.description || "Sem descrição"}</span>
+                        {t.installment_number && <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-muted-foreground font-mono">parcela {t.installment_number}</span>}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 flex-wrap items-center">
+                        <span className="flex items-center gap-1">{t.accounts?.name || "Sem conta"}</span>
+                        {t.categories && (
+                          <>
+                            <span>·</span>
+                            <span className="flex items-center gap-1">{t.categories.icon} {t.categories.name}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className={cn("font-mono tabular font-semibold whitespace-nowrap", t.type === "income" ? "text-income" : "text-expense")}>
+                      {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
+                    </div>
+                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" onClick={() => openEdit(t)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => remove(t.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
+                    </div>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 flex-wrap items-center">
-                    <span>{formatDateBR(t.occurred_on)}</span>
-                    <span>·</span>
-                    <span className="flex items-center gap-1">{t.accounts?.name || "Sem conta"}</span>
-                    {t.categories && (
-                      <>
-                        <span>·</span>
-                        <span className="flex items-center gap-1">{t.categories.icon} {t.categories.name}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className={cn("font-mono tabular font-semibold whitespace-nowrap", t.type === "income" ? "text-income" : "text-expense")}>
-                  {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
-                </div>
-                <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(t)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                  <Button variant="ghost" size="icon" onClick={() => remove(t.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
