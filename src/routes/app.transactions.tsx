@@ -125,19 +125,19 @@ function TxPage() {
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       if (!user) return [];
+      // Simplificando o select para evitar erros de join se o esquema estiver diferente
       const { data, error } = await supabase
         .from("transactions")
         .select(`
           *,
-          categories(name, icon, color),
-          accounts(name, type, closing_day, due_day, archived),
-          invoices(id, account_id, reference_month, reference_year)
+          categories(name, icon),
+          accounts(name, type)
         `)
         .order("occurred_on", { ascending: false })
         .limit(500);
       
       if (error) {
-        console.error("Erro ao carregar lançamentos:", error);
+        console.error("Erro detalhado Supabase:", error);
         throw error;
       }
       return data;
@@ -418,7 +418,7 @@ function TxPage() {
         {txError && (
           <div className="p-8 text-center text-destructive">
             <div className="font-semibold">Erro ao carregar dados</div>
-            <p className="text-xs mt-1">Verifique o console do navegador para mais detalhes.</p>
+            <p className="text-xs mt-1">Houve um problema na comunicação com o banco de dados.</p>
             <Button variant="outline" size="sm" onClick={() => refetch()} className="mt-4">Tentar novamente</Button>
           </div>
         )}
