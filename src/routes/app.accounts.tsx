@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, CreditCard, Wallet, Trash2, Pencil, Landmark, Banknote, ArrowRightLeft, Receipt, Coins, Link as LinkIcon } from "lucide-react";
+import { Plus, CreditCard, Wallet, Trash2, Pencil, Landmark, Banknote, ArrowRightLeft, Receipt, Coins, Link as LinkIcon, CreditCard as CardIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -27,10 +27,12 @@ const ACCOUNT_TYPES = [
 ];
 
 const CARD_TYPES = [
-  { value: "credit_card", label: "Cartão de Crédito", icon: CreditCard },
+  { value: "credit_only", label: "Crédito", icon: CreditCard },
+  { value: "debit_only", label: "Débito", icon: CardIcon },
+  { value: "multi", label: "Crédito e Débito", icon: ArrowRightLeft },
 ];
 
-const emptyForm = { name: "", type: "checking", current_balance: "0", closing_day: "1", due_day: "10", credit_limit: "", linked_account_id: "" };
+const emptyForm = { name: "", card_mode: "credit_only", current_balance: "0", closing_day: "1", due_day: "10", credit_limit: "", linked_account_id: "" };
 
 function AccountsPage() {
   const { user } = useAuth();
@@ -40,13 +42,6 @@ function AccountsPage() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<any>(emptyForm);
   const [confirmDel, setConfirmDel] = useState<any>(null);
-
-  useEffect(() => { 
-    if (!open) { 
-      setEditId(null); 
-      setForm({ ...emptyForm, type: activeTab === "cards" ? "credit_card" : "checking" }); 
-    } 
-  }, [open, activeTab]);
 
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ["accounts", user?.id],
@@ -58,14 +53,31 @@ function AccountsPage() {
     enabled: !!user,
   });
 
+  useEffect(() => { 
+    if (!open) { 
+      setEditId(null); 
+      setForm({ 
+        ...emptyForm, 
+        type: activeTab === "cards" ? "credit_card" : "checking",
+        card_mode: activeTab === "cards" ? "credit_only" : "checking"
+      }); 
+    } 
+  }, [open, activeTab]);
+
   const filteredAccounts = useMemo(() => accounts.filter(a => a.type !== "credit_card"), [accounts]);
   const filteredCards = useMemo(() => accounts.filter(a => a.type === "credit_card"), [accounts]);
 
   const openEdit = (a: any) => {
     setEditId(a.id);
+    // Determina o card_mode baseado nos dados existentes
+    let mode = "credit_only";
+    if (a.type === "credit_card" && a.linked_account_id) mode = "multi";
+    else if (a.type !== "credit_card") mode = "debit_only";
+
     setForm({
       name: a.name,
       type: a.type,
+      card_mode: mode,
       current_balance: String(a.current_balance ?? "0"),
       closing_day: a.closing_day ? String(a.closing_day) : "1",
       due_day: a.due_day ? String(a.due_day) : "10",
@@ -77,18 +89,30 @@ function AccountsPage() {
 
   const submit = async () => {
     if (!user || !form.name) { toast.error("Informe o nome"); return; }
+    
     const payload: any = {
       name: form.name,
-      type: form.type,
-      current_balance: Number(form.current_balance) || 0,
-      linked_account_id: form.linked_account_id || null,
+      linked_account_id: form.linked_account_id === "none" ? null : (form.linked_account_id || null),
     };
-    
-    if (form.type === "credit_card") {
-      payload.closing_day = Number(form.closing_day) || 1;
-      payload.due_day = Number(form.due_day) || 10;
-      payload.credit_limit = form.credit_limit ? Number(form.credit_limit) : null;
+
+    // Lógica de mapeamento baseada na escolha do usuário
+    if (activeTab === "cards") {
+      if (form.card_mode === "debit_only") {
+        payload.type = "checking"; // No banco, um cartão de débito puro é tratado como uma conta
+        payload.current_balance = Number(form.current_balance) || 0;
+        payload.closing_day = null;
+        payload.due_day = null;
+        payload.credit_limit = null;
+      } else {
+        payload.type = "credit_card";
+        payload.closing_day = Number(form.closing_day) || 1;
+        payload.due_day = Number(form.due_day) || 10;
+        payload.credit_limit = form.credit_limit ? Number(form.credit_limit) : null;
+        payload.current_balance = 0; // Cartão de crédito não tem saldo positivo próprio
+      }
     } else {
+      payload.type = form.type;
+      payload.current_balance = Number(form.current_balance) || 0;
       payload.closing_day = null;
       payload.due_day = null;
       payload.credit_limit = null;
@@ -138,52 +162,81 @@ function AccountsPage() {
                 <Label>Nome</Label>
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Nubank, Itaú, Carteira" className="mt-1.5" />
               </div>
-              <div>
-                <Label>Tipo</Label>
-                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {(activeTab === "cards" ? CARD_TYPES : ACCOUNT_TYPES).map((t) => (
-                      <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
               
-              {form.type === "credit_card" ? (
-                <div className="space-y-4 animate-in slide-in-from-top-2">
+              {activeTab === "cards" ? (
+                <>
                   <div>
-                    <Label>Conta Vinculada (para Débito/Pagamento)</Label>
-                    <Select value={form.linked_account_id} onValueChange={(v) => setForm({ ...form, linked_account_id: v })}>
-                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a conta bancária" /></SelectTrigger>
+                    <Label>Função do Cartão</Label>
+                    <Select value={form.card_mode} onValueChange={(v) => setForm({ ...form, card_mode: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">Nenhuma</SelectItem>
-                        {filteredAccounts.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        {CARD_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label>Dia de Fechamento</Label>
-                      <Input type="number" min={1} max={31} value={form.closing_day} onChange={(e) => setForm({ ...form, closing_day: e.target.value })} className="mt-1.5" />
+
+                  {(form.card_mode === "debit_only" || form.card_mode === "multi") && (
+                    <div className="animate-in slide-in-from-top-2 space-y-4">
+                      <div>
+                        <Label>Conta Vinculada (para Débito)</Label>
+                        <Select value={form.linked_account_id} onValueChange={(v) => setForm({ ...form, linked_account_id: v })}>
+                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a conta bancária" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Nenhuma (Saldo próprio)</SelectItem>
+                            {filteredAccounts.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {form.card_mode === "debit_only" && form.linked_account_id === "none" && (
+                        <div>
+                          <Label>Saldo Inicial do Cartão (R$)</Label>
+                          <Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" />
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <Label>Dia de Vencimento</Label>
-                      <Input type="number" min={1} max={31} value={form.due_day} onChange={(e) => setForm({ ...form, due_day: e.target.value })} className="mt-1.5" />
+                  )}
+
+                  {(form.card_mode === "credit_only" || form.card_mode === "multi") && (
+                    <div className="space-y-4 animate-in slide-in-from-top-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label>Dia de Fechamento</Label>
+                          <Input type="number" min={1} max={31} value={form.closing_day} onChange={(e) => setForm({ ...form, closing_day: e.target.value })} className="mt-1.5" />
+                        </div>
+                        <div>
+                          <Label>Dia de Vencimento</Label>
+                          <Input type="number" min={1} max={31} value={form.due_day} onChange={(e) => setForm({ ...form, due_day: e.target.value })} className="mt-1.5" />
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Limite de Crédito (R$)</Label>
+                        <Input type="number" value={form.credit_limit} onChange={(e) => setForm({ ...form, credit_limit: e.target.value })} placeholder="Opcional" className="mt-1.5" />
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <Label>Limite de Crédito (R$)</Label>
-                    <Input type="number" value={form.credit_limit} onChange={(e) => setForm({ ...form, credit_limit: e.target.value })} placeholder="Opcional" className="mt-1.5" />
-                  </div>
-                </div>
+                  )}
+                </>
               ) : (
-                <div className="animate-in slide-in-from-top-2">
-                  <Label>Saldo Atual (R$)</Label>
-                  <Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" />
-                </div>
+                <>
+                  <div>
+                    <Label>Tipo de Conta</Label>
+                    <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {ACCOUNT_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="animate-in slide-in-from-top-2">
+                    <Label>Saldo Atual (R$)</Label>
+                    <Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" />
+                  </div>
+                </>
               )}
               
               <Button onClick={submit} className="w-full mt-2">{editId ? "Salvar Alterações" : "Cadastrar"}</Button>
@@ -214,16 +267,6 @@ function AccountsPage() {
               ))
             )}
           </div>
-          <div className="rounded-xl bg-surface-2 p-4 border border-border">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">
-              <ArrowRightLeft className="h-3 w-3" /> Formas suportadas
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {["Pix", "Transferência", "Boleto", "Saque", "Depósito"].map(tag => (
-                <span key={tag} className="text-[10px] px-2 py-1 rounded-full bg-background border border-border text-muted-foreground">{tag}</span>
-              ))}
-            </div>
-          </div>
         </TabsContent>
 
         <TabsContent value="cards" className="space-y-4">
@@ -237,15 +280,6 @@ function AccountsPage() {
                 <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} accounts={accounts} />
               ))
             )}
-          </div>
-          <div className="rounded-xl bg-surface-2 p-4 border border-border">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">
-              <Receipt className="h-3 w-3" /> Controle de Fatura e Débito
-            </h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Cartões vinculados a uma conta permitem lançamentos no <strong>Débito</strong> que descontam o saldo da conta imediatamente. 
-              Lançamentos no <strong>Crédito</strong> são agrupados na fatura do cartão.
-            </p>
           </div>
         </TabsContent>
       </Tabs>
@@ -268,8 +302,22 @@ function AccountsPage() {
 
 function AccountCard({ account, onEdit, onDelete, accounts }: { account: any; onEdit: () => void; onDelete: () => void; accounts?: any[] }) {
   const isCard = account.type === "credit_card";
-  const Icon = isCard ? CreditCard : (ACCOUNT_TYPES.find(t => t.value === account.type)?.icon || Wallet);
   const linkedAccount = accounts?.find(a => a.id === account.linked_account_id);
+  
+  // Determina o ícone e label
+  let Icon = Wallet;
+  let label = "Conta";
+  
+  if (isCard) {
+    Icon = CreditCard;
+    label = linkedAccount ? "Cartão Múltiplo" : "Cartão de Crédito";
+  } else {
+    const typeMatch = ACCOUNT_TYPES.find(t => t.value === account.type);
+    if (typeMatch) {
+      Icon = typeMatch.icon;
+      label = typeMatch.label;
+    }
+  }
   
   return (
     <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:shadow-elegant transition-all group">
@@ -281,7 +329,7 @@ function AccountCard({ account, onEdit, onDelete, accounts }: { account: any; on
           <div className="min-w-0">
             <div className="font-display font-semibold truncate">{account.name}</div>
             <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-              {isCard ? "Cartão de Crédito" : (ACCOUNT_TYPES.find(t => t.value === account.type)?.label || "Conta")}
+              {label}
               {linkedAccount && <><LinkIcon className="h-2 w-2" /> {linkedAccount.name}</>}
             </div>
           </div>
