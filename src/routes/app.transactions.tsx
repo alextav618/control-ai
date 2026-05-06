@@ -121,22 +121,19 @@ function TxPage() {
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
 
-  const { data: tx = [], isLoading: txLoading, error: txError, refetch } = useQuery({
+  // Consulta simplificada sem joins
+  const { data: rawTx = [], isLoading: txLoading, error: txError, refetch } = useQuery({
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       if (!user) return [];
       const { data, error } = await supabase
         .from("transactions")
-        .select(`
-          *,
-          categories(name, icon),
-          accounts(name, type)
-        `)
+        .select("*")
         .order("occurred_on", { ascending: false })
         .limit(500);
       
       if (error) {
-        console.error("Erro detalhado Supabase:", error);
+        console.error("Erro Supabase (fetch transactions):", error);
         throw error;
       }
       return data;
@@ -165,6 +162,15 @@ function TxPage() {
     },
     enabled: !!user,
   });
+
+  // Vincula os dados manualmente no frontend
+  const tx = useMemo(() => {
+    return rawTx.map((t: any) => ({
+      ...t,
+      categories: cats.find((c: any) => c.id === t.category_id),
+      accounts: accounts.find((a: any) => a.id === t.account_id),
+    }));
+  }, [rawTx, cats, accounts]);
 
   const filteredTx = useMemo(() => {
     return tx.filter((t: any) => {
