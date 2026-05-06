@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -71,6 +72,7 @@ function TxPage() {
   const [filterCategory, setFilterCategory] = useState("all");
   const [filterAccount, setFilterAccount] = useState("all");
   const [filterType, setFilterType] = useState("all");
+  const [activeFormTab, setActiveFormTab] = useState("common");
 
   const [form, setForm] = useState({
     type: "expense",
@@ -87,6 +89,7 @@ function TxPage() {
   const resetForm = () => {
     setForm({ type: "expense", description: "", amount: "", occurred_on: todayLocal(), account_id: "", to_account_id: "", category_id: "", payment_method: "debito", installments: "1" });
     setEditId(null);
+    setActiveFormTab("common");
   };
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
@@ -218,69 +221,125 @@ function TxPage() {
     }
   };
 
+  const cashAccounts = accounts.filter(a => a.type !== "credit_card");
+  const creditCards = accounts.filter(a => a.type === "credit_card");
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <h1 className="font-display text-2xl md:text-3xl font-bold">Lançamentos</h1>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo</Button></DialogTrigger>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Novo lançamento</DialogTitle></DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Tipo</Label>
-                  <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="expense">Despesa</SelectItem>
-                      <SelectItem value="income">Receita</SelectItem>
-                      <SelectItem value="transfer">Transferência</SelectItem>
-                    </SelectContent>
-                  </Select>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Novo lançamento</DialogTitle>
+              <DialogDescription>Escolha o tipo de lançamento para continuar.</DialogDescription>
+            </DialogHeader>
+            
+            <Tabs value={activeFormTab} onValueChange={(v) => {
+              setActiveFormTab(v);
+              if (v === "credit") {
+                setForm({ ...form, type: "expense", payment_method: "credito", account_id: creditCards[0]?.id || "" });
+              } else {
+                setForm({ ...form, payment_method: "debito", account_id: cashAccounts[0]?.id || "" });
+              }
+            }} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="common" className="flex items-center gap-2">
+                  <Wallet className="h-3.5 w-3.5" /> Geral / Pix
+                </TabsTrigger>
+                <TabsTrigger value="credit" className="flex items-center gap-2">
+                  <CreditCard className="h-3.5 w-3.5" /> Cartão de Crédito
+                </TabsTrigger>
+              </TabsList>
+
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {activeFormTab === "common" ? (
+                    <div>
+                      <Label>Tipo</Label>
+                      <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                        <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="expense">Despesa</SelectItem>
+                          <SelectItem value="income">Receita</SelectItem>
+                          <SelectItem value="transfer">Transferência</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col justify-center">
+                      <Label className="text-muted-foreground">Tipo</Label>
+                      <div className="mt-2 text-sm font-medium text-expense">Despesa no Cartão</div>
+                    </div>
+                  )}
+                  <div><Label>Data</Label><Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" /></div>
                 </div>
-                <div><Label>Data</Label><Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" /></div>
-              </div>
-              <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="mt-1.5" /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" /></div>
-                {form.type === "expense" && form.payment_method === "credito" && (
-                  <div><Label>Parcelas</Label><Input type="number" min={1} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" /></div>
+
+                <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Almoço, Salário, Transferência..." className="mt-1.5" /></div>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0,00" className="mt-1.5" /></div>
+                  {activeFormTab === "credit" && (
+                    <div><Label>Parcelas</Label><Input type="number" min={1} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" /></div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>{activeFormTab === "credit" ? "Cartão" : "Conta"}</Label>
+                    <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>
+                        {(activeFormTab === "credit" ? creditCards : cashAccounts).map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Categoria</Label>
+                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>
+                        {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
+                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {activeFormTab === "common" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label>Forma de Pagamento</Label>
+                      <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
+                        <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {PAYMENT_METHODS.filter(m => m.value !== "credito").map((m) => (
+                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {form.type === "transfer" && (
+                      <div>
+                        <Label>Conta de Destino</Label>
+                        <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                          <SelectContent>
+                            {accounts.filter(a => a.id !== form.account_id).map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Conta / Cartão</Label>
-                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      {accounts.map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Forma de Pagamento</Label>
-                  <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {PAYMENT_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              {form.type === "transfer" && (
-                <div>
-                  <Label>Conta de Destino</Label>
-                  <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                    <SelectContent>
-                      {accounts.filter(a => a.id !== form.account_id).map((a: any) => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              <Button onClick={submit} disabled={submitting} className="w-full">{submitting ? "Salvando..." : "Lançar"}</Button>
-            </div>
+              
+              <Button onClick={submit} disabled={submitting} className="w-full mt-4">{submitting ? "Salvando..." : "Lançar"}</Button>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>
