@@ -224,6 +224,13 @@ function TxPage() {
   const cashAccounts = accounts.filter(a => a.type !== "credit_card");
   const creditCards = accounts.filter(a => a.type === "credit_card");
 
+  const filteredPaymentMethods = useMemo(() => {
+    if (form.type === "income") {
+      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito"].includes(m.value));
+    }
+    return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "boleto", "debito", "saque"].includes(m.value));
+  }, [form.type]);
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
@@ -258,7 +265,10 @@ function TxPage() {
                   {activeFormTab === "common" ? (
                     <div>
                       <Label>Tipo</Label>
-                      <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                      <Select value={form.type} onValueChange={(v) => {
+                        const newMethod = v === "income" ? "pix" : "debito";
+                        setForm({ ...form, type: v, payment_method: newMethod });
+                      }}>
                         <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="expense">Despesa</SelectItem>
@@ -317,7 +327,7 @@ function TxPage() {
                       <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
                         <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {PAYMENT_METHODS.filter(m => m.value !== "credito").map((m) => (
+                          {filteredPaymentMethods.map((m) => (
                             <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                           ))}
                         </SelectContent>
