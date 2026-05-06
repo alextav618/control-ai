@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames } from "@/lib/format";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell } from "recharts";
-import { BarChart3, TrendingUp, TrendingDown, PieChart as PieIcon, Calendar } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, AreaChart, Area } from "recharts";
+import { BarChart3, TrendingUp, TrendingDown, PieChart as PieIcon, Calendar, Landmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/reports")({
@@ -24,14 +24,24 @@ function ReportsPage() {
       const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
       const startDate = sixMonthsAgo.toISOString().split('T')[0];
 
-      const [txR, catsR] = await Promise.all([
+      const [txR, catsR, accR, assetsR, snapsR, movR, invR] = await Promise.all([
         supabase.from("transactions").select("*").gte("occurred_on", startDate),
         supabase.from("categories").select("*"),
+        supabase.from("accounts").select("*").eq("archived", false),
+        supabase.from("investment_assets").select("*").eq("archived", false),
+        supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false }),
+        supabase.from("investment_movements").select("*"),
+        supabase.from("invoices").select("*").in("status", ["open", "closed"]),
       ]);
 
       return {
         transactions: txR.data ?? [],
         categories: catsR.data ?? [],
+        accounts: accR.data ?? [],
+        assets: assetsR.data ?? [],
+        snapshots: snapsR.data ?? [],
+        movements: movR.data ?? [],
+        invoices: invR.data ?? [],
       };
     },
     enabled: !!user,
@@ -39,14 +49,13 @@ function ReportsPage() {
 
   const monthlyData = useMemo(() => {
     if (!data) return [];
-    const groups: Record<string, { month: string; income: number; expense: number }> = {};
+    const groups: Record<string, { month: string; income: number; expense: number; netWorth: number }> = {};
     
-    // Inicializa os últimos 6 meses
     const now = new Date();
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      groups[key] = { month: `${monthNames[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`, income: 0, expense: 0 };
+      groups[key] = { month: `${monthNames[d.getMonth()]}/${String(d.getFullYear()).slice(2)}`, income: 0, expense: 0, netWorth: 0 };
     }
 
     data.transactions.forEach((t: any) => {
@@ -55,6 +64,37 @@ function ReportsPage() {
       if (groups[key]) {
         if (t.type === "income") groups[key].income += Number(t.amount);
         else if (t.type === "expense") groups[key].expense += Number(t.amount);
+      }
+    });
+
+    // Cálculo simplificado de evolução de patrimônio (apenas para o mês atual como referência)
+    const cash = data.accounts.filter(a => a.type !== 'credit_card').reduce((s, a) => s + Number(a.current_balance), 0);
+    const debt = data.invoices.reduce((s, i) => s + Number(i.total_amount), 0);
+    let invest = 0;
+    data.assets.forEach(a => {
+      const snap = data.snapshots.find(s => s.asset_id === a.id);
+      if (snap) invest += Number(snap.market_value);
+      else {
+        const movs = data.movements.filter(m => m.asset_id === a.id);
+        invest += movs.reduce((s, m) => {
+          if (m.type === 'deposit') return s + Number(m.amount);
+          if (m.type === 'withdrawal') return s - Number(m.amount);
+          return s + Number(m.amount);
+        }, 0);
+      }
+    });
+
+    const currentNetWorth = cash + invest - debt;
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    
+    // Simulando histórico de patrimônio baseado no fluxo de caixa (aproximação)
+    let runningNetWorth = currentNetWorth;
+    const sortedKeys = Object.keys(groups).sort().reverse();
+    sortedKeys.forEach((key, idx) => {
+      groups[key].netWorth = runningNetWorth;
+      if (idx < sortedKeys.length - 1) {
+        const flow = groups[key].income - groups[key].expense;
+        runningNetWorth -= flow;
       }
     });
 
@@ -129,11 +169,38 @@ function ReportsPage() {
         </div>
       </div>
 
+      {/* Gráfico de Patrimônio Líquido */}
+      <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
+        <h2 className="font-display font-semibold mb-6 flex items-center gap-2">
+          <Landmark className="h-4 w-4 text-primary" /> Evolução do Patrimônio Líquido
+        </h2>
+        <div className="h-[300px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={monthlyData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <defs>
+                <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+              <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 12 }} dy={10} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fill: "var(--muted-foreground)", fontSize: 10 }} tickFormatter={(v) => `R$ ${v}`} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "var(--surface-1)", borderColor: "var(--border)", borderRadius: "12px", fontSize: "12px" }}
+                formatter={(v: number) => [formatBRL(v), "Patrimônio"]}
+              />
+              <Area type="monotone" dataKey="netWorth" stroke="var(--primary)" fillOpacity={1} fill="url(#colorNet)" strokeWidth={3} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Gráfico Mensal */}
         <div className="rounded-2xl border border-border bg-surface-1 p-5 shadow-card">
           <h2 className="font-display font-semibold mb-6 flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-primary" /> Evolução Mensal
+            <TrendingUp className="h-4 w-4 text-primary" /> Fluxo de Caixa Mensal
           </h2>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">

@@ -4,12 +4,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -90,7 +91,7 @@ function TxPage() {
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
 
-  const { data: rawTx = [], isLoading: txLoading, refetch } = useQuery({
+  const { data: rawTx = [], isLoading: txLoading } = useQuery({
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("transactions").select("*").order("occurred_on", { ascending: false }).limit(500);
@@ -201,8 +202,20 @@ function TxPage() {
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     } catch (e: any) { toast.error(e.message); }
     finally { setSubmitting(false); }
+  };
+
+  const removeTx = async (id: string) => {
+    if (!confirm("Excluir este lançamento?")) return;
+    const { error } = await supabase.from("transactions").delete().eq("id", id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Excluído");
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    }
   };
 
   return (
@@ -287,30 +300,105 @@ function TxPage() {
         </div>
       </div>
 
+      <div className="flex items-center gap-3 mb-6 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Buscar lançamentos..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+        </div>
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-[140px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="expense">Despesas</SelectItem>
+            <SelectItem value="income">Receitas</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="space-y-8">
-        {groupedTx.map(([date, items]) => (
-          <div key={date} className="space-y-2">
-            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">{formatDateBR(date)}</h3>
-            <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden divide-y divide-border">
-              {items.map((t: any) => (
-                <div key={t.id} className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{t.description}</div>
-                    <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center">
-                      <span>{t.accounts?.name}</span>
-                      <span>·</span>
-                      <span className="capitalize">{t.payment_method}</span>
-                    </div>
-                  </div>
-                  <div className={cn("font-mono tabular font-semibold", t.type === "income" ? "text-income" : "text-expense")}>
-                    {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
-                  </div>
-                </div>
-              ))}
+        {txLoading ? (
+          <div className="text-center py-10 text-muted-foreground">Carregando lançamentos...</div>
+        ) : groupedTx.length === 0 ? (
+          <div className="text-center py-20 border border-dashed rounded-2xl text-muted-foreground">Nenhum lançamento encontrado.</div>
+        ) : (
+          groupedTx.map(([date, items]) => (
+            <div key={date} className="space-y-2">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">{formatDateBR(date)}</h3>
+              <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden divide-y divide-border">
+                {items.map((t: any) => (
+                  <TxRow key={t.id} t={t} onDelete={() => removeTx(t.id)} />
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
+  );
+}
+
+function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
+  return (
+    <div className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className="h-9 w-9 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
+          {t.categories?.icon || "📦"}
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium truncate">{t.description}</span>
+            {t.audit_level && <AuditIndicator level={t.audit_level} reason={t.audit_reason} />}
+          </div>
+          <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
+            <span>{t.accounts?.name}</span>
+            <span>·</span>
+            <span className="capitalize">{t.payment_method}</span>
+            {t.installment_number && (
+              <>
+                <span>·</span>
+                <span className="text-[10px] px-1 rounded bg-muted">Parc. {t.installment_number}</span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="text-right shrink-0">
+        <div className={cn("font-mono tabular font-semibold", t.type === "income" ? "text-income" : "text-expense")}>
+          {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
+        </div>
+        <Button variant="ghost" size="icon" onClick={onDelete} className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function AuditIndicator({ level, reason }: { level: string; reason?: string }) {
+  const meta = {
+    green: { icon: ShieldCheck, color: "text-audit-green", bg: "bg-audit-green/10", label: "Saudável" },
+    yellow: { icon: AlertTriangle, color: "text-audit-yellow", bg: "bg-audit-yellow/10", label: "Atenção" },
+    red: { icon: AlertCircle, color: "text-audit-red", bg: "bg-audit-red/10", label: "Crítico" },
+  }[level as "green" | "yellow" | "red"] || { icon: Info, color: "text-muted-foreground", bg: "bg-muted/10", label: "Info" };
+
+  const Icon = meta.icon;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button className={cn("h-5 w-5 rounded-full flex items-center justify-center transition-transform hover:scale-110", meta.bg, meta.color)}>
+          <Icon className="h-3 w-3" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Icon className={cn("h-4 w-4", meta.color)} />
+          <span className="text-xs font-bold uppercase tracking-wider">Auditoria IA: {meta.label}</span>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {reason || "A IA classificou este lançamento automaticamente com base no seu perfil e histórico."}
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }
