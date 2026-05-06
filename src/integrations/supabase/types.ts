@@ -7,8 +7,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
@@ -29,6 +27,7 @@ export type Database = {
           type: Database["public"]["Enums"]["account_type"]
           updated_at: string
           user_id: string
+          linked_account_id: string | null
         }
         Insert: {
           archived?: boolean
@@ -44,6 +43,7 @@ export type Database = {
           type: Database["public"]["Enums"]["account_type"]
           updated_at?: string
           user_id: string
+          linked_account_id?: string | null
         }
         Update: {
           archived?: boolean
@@ -59,8 +59,17 @@ export type Database = {
           type?: Database["public"]["Enums"]["account_type"]
           updated_at?: string
           user_id?: string
+          linked_account_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "accounts_linked_account_id_fkey"
+            columns: ["linked_account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       audit_log: {
         Row: {
@@ -402,7 +411,7 @@ export type Database = {
           notes?: string | null
           occurred_on?: string
           quantity?: number | null
-          type?: Database["public"]["Enums"]["movement_type"]
+          type: Database["public"]["Enums"]["movement_type"]
           unit_price?: number | null
           user_id?: string
         }
@@ -643,6 +652,7 @@ export type Database = {
           installment_plan_id: string | null
           invoice_id: string | null
           occurred_on: string
+          payment_method: string | null
           source: string
           status: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
@@ -665,6 +675,7 @@ export type Database = {
           installment_plan_id?: string | null
           invoice_id?: string | null
           occurred_on?: string
+          payment_method?: string | null
           source?: string
           status?: Database["public"]["Enums"]["transaction_status"]
           type: Database["public"]["Enums"]["transaction_type"]
@@ -687,6 +698,7 @@ export type Database = {
           installment_plan_id?: string | null
           invoice_id?: string | null
           occurred_on?: string
+          payment_method?: string | null
           source?: string
           status?: Database["public"]["Enums"]["transaction_status"]
           type?: Database["public"]["Enums"]["transaction_type"]
@@ -737,7 +749,7 @@ export type Database = {
     }
     Functions: {
       recompute_invoice_total: {
-        Args: { p_invoice: string }
+        Args: { p_invoice_id: string }
         Returns: undefined
       }
     }
