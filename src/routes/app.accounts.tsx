@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, CreditCard, Wallet, Trash2, Pencil, Landmark, Banknote, ArrowRightLeft, Receipt, Coins } from "lucide-react";
+import { Plus, CreditCard, Wallet, Trash2, Pencil, Landmark, Banknote, ArrowRightLeft, Receipt, Coins, Link as LinkIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -19,9 +19,8 @@ export const Route = createFileRoute("/app/accounts")({
   component: AccountsPage,
 });
 
-// Mapeamento de tipos para o banco de dados (mantendo compatibilidade com o enum existente)
 const ACCOUNT_TYPES = [
-  { value: "checking", label: "Conta Corrente (Pix/Transf/Boleto)", icon: Landmark },
+  { value: "checking", label: "Conta Corrente", icon: Landmark },
   { value: "savings", label: "Poupança / Investimento", icon: Coins },
   { value: "cash", label: "Dinheiro / Carteira", icon: Banknote },
   { value: "other", label: "Outros", icon: Wallet },
@@ -29,10 +28,9 @@ const ACCOUNT_TYPES = [
 
 const CARD_TYPES = [
   { value: "credit_card", label: "Cartão de Crédito", icon: CreditCard },
-  { value: "checking", label: "Cartão de Débito (Vinculado à Conta)", icon: ArrowRightLeft },
 ];
 
-const emptyForm = { name: "", type: "checking", current_balance: "0", closing_day: "1", due_day: "10", credit_limit: "" };
+const emptyForm = { name: "", type: "checking", current_balance: "0", closing_day: "1", due_day: "10", credit_limit: "", linked_account_id: "" };
 
 function AccountsPage() {
   const { user } = useAuth();
@@ -60,14 +58,8 @@ function AccountsPage() {
     enabled: !!user,
   });
 
-  const filteredAccounts = useMemo(() => {
-    return accounts.filter(a => a.type !== "credit_card");
-  }, [accounts]);
-
-  const filteredCards = useMemo(() => {
-    // No contexto deste app, cartões são especificamente do tipo credit_card ou contas que o usuário quer ver como cartões
-    return accounts.filter(a => a.type === "credit_card");
-  }, [accounts]);
+  const filteredAccounts = useMemo(() => accounts.filter(a => a.type !== "credit_card"), [accounts]);
+  const filteredCards = useMemo(() => accounts.filter(a => a.type === "credit_card"), [accounts]);
 
   const openEdit = (a: any) => {
     setEditId(a.id);
@@ -78,6 +70,7 @@ function AccountsPage() {
       closing_day: a.closing_day ? String(a.closing_day) : "1",
       due_day: a.due_day ? String(a.due_day) : "10",
       credit_limit: a.credit_limit ? String(a.credit_limit) : "",
+      linked_account_id: a.linked_account_id ?? "",
     });
     setOpen(true);
   };
@@ -88,6 +81,7 @@ function AccountsPage() {
       name: form.name,
       type: form.type,
       current_balance: Number(form.current_balance) || 0,
+      linked_account_id: form.linked_account_id || null,
     };
     
     if (form.type === "credit_card") {
@@ -116,12 +110,8 @@ function AccountsPage() {
   const confirmRemove = async () => {
     if (!confirmDel) return;
     const { error } = await supabase.from("accounts").update({ archived: true }).eq("id", confirmDel.id);
-    if (error) {
-      toast.error(error.message);
-    } else {
-      toast.success("Excluído com sucesso");
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-    }
+    if (error) { toast.error(error.message); }
+    else { toast.success("Excluído com sucesso"); qc.invalidateQueries({ queryKey: ["accounts"] }); }
     setConfirmDel(null);
   };
 
@@ -162,6 +152,18 @@ function AccountsPage() {
               
               {form.type === "credit_card" ? (
                 <div className="space-y-4 animate-in slide-in-from-top-2">
+                  <div>
+                    <Label>Conta Vinculada (para Débito/Pagamento)</Label>
+                    <Select value={form.linked_account_id} onValueChange={(v) => setForm({ ...form, linked_account_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a conta bancária" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Nenhuma</SelectItem>
+                        {filteredAccounts.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label>Dia de Fechamento</Label>
@@ -205,9 +207,7 @@ function AccountsPage() {
             {isLoading ? (
               <div className="col-span-2 py-10 text-center text-muted-foreground">Carregando contas...</div>
             ) : filteredAccounts.length === 0 ? (
-              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">
-                Nenhuma conta cadastrada.
-              </div>
+              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">Nenhuma conta cadastrada.</div>
             ) : (
               filteredAccounts.map((a) => (
                 <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} />
@@ -231,22 +231,20 @@ function AccountsPage() {
             {isLoading ? (
               <div className="col-span-2 py-10 text-center text-muted-foreground">Carregando cartões...</div>
             ) : filteredCards.length === 0 ? (
-              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">
-                Nenhum cartão de crédito cadastrado.
-              </div>
+              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">Nenhum cartão cadastrado.</div>
             ) : (
               filteredCards.map((a) => (
-                <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} />
+                <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} accounts={accounts} />
               ))
             )}
           </div>
           <div className="rounded-xl bg-surface-2 p-4 border border-border">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">
-              <Receipt className="h-3 w-3" /> Controle de Fatura
+              <Receipt className="h-3 w-3" /> Controle de Fatura e Débito
             </h3>
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Cartões de crédito possuem controle automático de fatura baseado no dia de fechamento. 
-              Lançamentos após o fechamento são jogados automaticamente para a próxima fatura.
+              Cartões vinculados a uma conta permitem lançamentos no <strong>Débito</strong> que descontam o saldo da conta imediatamente. 
+              Lançamentos no <strong>Crédito</strong> são agrupados na fatura do cartão.
             </p>
           </div>
         </TabsContent>
@@ -256,9 +254,7 @@ function AccountsPage() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir "{confirmDel?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação arquivará a conta. O histórico de transações será mantido, mas ela não aparecerá mais para novos lançamentos.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Esta ação arquivará a conta. O histórico de transações será mantido.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -270,9 +266,10 @@ function AccountsPage() {
   );
 }
 
-function AccountCard({ account, onEdit, onDelete }: { account: any; onEdit: () => void; onDelete: () => void }) {
+function AccountCard({ account, onEdit, onDelete, accounts }: { account: any; onEdit: () => void; onDelete: () => void; accounts?: any[] }) {
   const isCard = account.type === "credit_card";
   const Icon = isCard ? CreditCard : (ACCOUNT_TYPES.find(t => t.value === account.type)?.icon || Wallet);
+  const linkedAccount = accounts?.find(a => a.id === account.linked_account_id);
   
   return (
     <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:shadow-elegant transition-all group">
@@ -283,8 +280,9 @@ function AccountCard({ account, onEdit, onDelete }: { account: any; onEdit: () =
           </div>
           <div className="min-w-0">
             <div className="font-display font-semibold truncate">{account.name}</div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wider">
-              {isCard ? "Cartão de Crédito" : (ACCOUNT_TYPES.find(t => t.value === account.type)?.label.split(' (')[0] || "Conta")}
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+              {isCard ? "Cartão de Crédito" : (ACCOUNT_TYPES.find(t => t.value === account.type)?.label || "Conta")}
+              {linkedAccount && <><LinkIcon className="h-2 w-2" /> {linkedAccount.name}</>}
             </div>
           </div>
         </div>
@@ -306,9 +304,6 @@ function AccountCard({ account, onEdit, onDelete }: { account: any; onEdit: () =
                 <div className="text-[10px] text-muted-foreground uppercase">Fechamento / Vencimento</div>
                 <div className="text-sm font-medium">Dia {account.closing_day} / Dia {account.due_day}</div>
               </div>
-            </div>
-            <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden">
-              <div className="h-full bg-primary/30 w-full" />
             </div>
           </div>
         ) : (
