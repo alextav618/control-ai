@@ -23,8 +23,8 @@ import { Route as AppGoalsRouteImport } from './routes/app.goals'
 import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
 import { Route as AppCategoriesRouteImport } from './routes/app.categories'
 import { Route as AppBillsRouteImport } from './routes/app.bills'
-import { Route as AppAccountsRouteImport } from './routes/app.accounts'
 import { Route as AppAuditRouteImport } from './routes/app.audit'
+import { Route as AppAccountsRouteImport } from './routes/app.accounts'
 import { Route as ApiPublicHooksUpdateRatesRouteImport } from './routes/api/public/hooks/update-rates'
 
 const AuthRoute = AuthRouteImport.update({
@@ -97,14 +97,14 @@ const AppBillsRoute = AppBillsRouteImport.update({
   path: '/bills',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAccountsRoute = AppAccountsRouteImport.update({
-  id: '/accounts',
-  path: '/accounts',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAuditRoute = AppAuditRouteImport.update({
   id: '/audit',
   path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
 const ApiPublicHooksUpdateRatesRoute =
@@ -119,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
@@ -129,7 +130,6 @@ export interface FileRoutesByFullPath {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -137,6 +137,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
@@ -147,7 +148,6 @@ export interface FileRoutesByTo {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -157,6 +157,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
+  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
@@ -167,7 +168,6 @@ export interface FileRoutesById {
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
   '/app/transactions': typeof AppTransactionsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
 }
@@ -178,6 +178,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/auth'
     | '/app/accounts'
+    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
@@ -188,7 +189,6 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
-    | '/app/audit'
     | '/app/'
     | '/api/public/hooks/update-rates'
   fileRoutesByTo: FileRoutesByTo
@@ -196,6 +196,7 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/app/accounts'
+    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
@@ -206,7 +207,6 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
-    | '/app/audit'
     | '/app'
     | '/api/public/hooks/update-rates'
   id:
@@ -215,6 +215,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/auth'
     | '/app/accounts'
+    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
@@ -225,7 +226,6 @@ export interface FileRouteTypes {
     | '/app/invoices'
     | '/app/profiles'
     | '/app/transactions'
-    | '/app/audit'
     | '/app/'
     | '/api/public/hooks/update-rates'
   fileRoutesById: FileRoutesById
@@ -337,18 +337,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBillsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/accounts': {
-      id: '/app/accounts'
-      path: '/accounts'
-      fullPath: '/app/accounts'
-      preLoaderRoute: typeof AppAccountsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/audit': {
       id: '/app/audit'
       path: '/audit'
       fullPath: '/app/audit'
       preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/accounts': {
+      id: '/app/accounts'
+      path: '/accounts'
+      fullPath: '/app/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
       parentRoute: typeof AppRoute
     }
     '/api/public/hooks/update-rates': {
@@ -363,6 +363,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
+  AppAuditRoute: typeof AppAuditRoute
   AppBillsRoute: typeof AppBillsRoute
   AppCategoriesRoute: typeof AppCategoriesRoute
   AppDashboardRoute: typeof AppDashboardRoute
@@ -373,12 +374,12 @@ interface AppRouteChildren {
   AppInvoicesRoute: typeof AppInvoicesRoute
   AppProfilesRoute: typeof AppProfilesRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
-  AppAuditRoute: typeof AppAuditRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
+  AppAuditRoute: AppAuditRoute,
   AppBillsRoute: AppBillsRoute,
   AppCategoriesRoute: AppCategoriesRoute,
   AppDashboardRoute: AppDashboardRoute,
@@ -389,7 +390,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppInvoicesRoute: AppInvoicesRoute,
   AppProfilesRoute: AppProfilesRoute,
   AppTransactionsRoute: AppTransactionsRoute,
-  AppAuditRoute: AppAuditRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
