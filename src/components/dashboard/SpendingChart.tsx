@@ -59,7 +59,7 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
             formatter={(value: number) => [formatBRL(value), "Gasto"]}
             labelStyle={{ fontWeight: "bold", marginBottom: "4px" }}
           />
-          <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0}> {/* strokeWidth removido para barras mais finas */}
+          <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0} barSize={8}> {/* barSize ajustado para 1/4 do tamanho */}
             {data.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
