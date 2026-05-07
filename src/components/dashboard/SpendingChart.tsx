@@ -23,8 +23,16 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
       <ResponsiveContainer width="100%" height="100%">
         <BarChart
           data={data}
-          margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
+          margin={{ top: 10, right: 10, left: -15, bottom: 0 }} // Margem ajustada para ser mais fino
         >
+          {/* Gradiente de Rosa para Roxo */}
+          <defs>
+            <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="oklch(0.68 0.26 0)" /> {/* Rosa */}
+              <stop offset="95%" stopColor="oklch(0.62 0.25 310)" /> {/* Roxo */}
+            </linearGradient>
+          </defs>
+
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
           <XAxis
             dataKey="name"
@@ -51,12 +59,11 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
             formatter={(value: number) => [formatBRL(value), "Gasto"]}
             labelStyle={{ fontWeight: "bold", marginBottom: "4px" }}
           />
-          <Bar dataKey="total" radius={[6, 6, 0, 0]}>
+          <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0}> {/* strokeWidth removido para barras mais finas */}
             {data.map((entry, index) => (
               <Cell
                 key={`cell-${index}`}
-                fill={index === 0 ? "var(--primary)" : "var(--primary-glow)"}
-                fillOpacity={0.8}
+                fill="url(#colorGradient)" // Aplica o gradiente
               />
             ))}
           </Bar>
