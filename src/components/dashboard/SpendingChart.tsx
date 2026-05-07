@@ -54,10 +54,10 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
               borderColor: "var(--border)",
               borderRadius: "12px",
               fontSize: "12px",
-              color: "var(--foreground)",
+              color: "var(--foreground)", // Cor clara para o texto do tooltip
             }}
             formatter={(value: number) => [formatBRL(value), "Gasto"]}
-            labelStyle={{ fontWeight: "bold", marginBottom: "4px" }}
+            labelStyle={{ fontWeight: "bold", marginBottom: "4px", color: "var(--foreground)" }} // Cor clara para o label também
           />
           <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0} barSize={8}> {/* barSize ajustado para 1/4 do tamanho */}
             {data.map((entry, index) => (
