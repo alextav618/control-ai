@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString, formatDateBR } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -12,6 +12,7 @@ import SpendingChart from "@/components/dashboard/SpendingChart";
 import { KpiCard } from "@/components/dashboard/KpiCard";
 import { BreakdownCard } from "@/components/dashboard/BreakdownCard";
 import { DashboardCard } from "@/components/dashboard/DashboardCard";
+import { Progress } from "@/components/ui/progress";
 
 export const Route = createFileRoute("/app/dashboard")({
   component: Dashboard,
@@ -32,11 +33,11 @@ function Dashboard() {
       const futureLimitDate = new Date(year, now.getMonth() + 4, 0);
       const futureLimit = localDateString(futureLimitDate);
 
-      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR, auditR, catsR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
-        supabase.from("transactions").select("*, categories(name, icon, color), accounts(name, type, closing_day, due_day), invoices(id, account_id, reference_month, reference_year)").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
-        supabase.from("transactions").select("amount, occurred_on, type, installment_plan_id, accounts(type)").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
-        supabase.from("invoices").select("*, accounts!inner(name, archived), transactions(amount), invoice_items(amount)").in("status", ["open", "closed"]).eq("accounts.archived", false),
+        supabase.from("transactions").select("*").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
+        supabase.from("transactions").select("*").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
+        supabase.from("invoices").select("*").in("status", ["open", "closed"]),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
@@ -44,7 +45,10 @@ function Dashboard() {
         supabase.from("investment_assets").select("*").eq("archived", false),
         supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false }),
         supabase.from("investment_movements").select("*"),
+        supabase.from("audit_log").select("level").gte("created_at", monthStart),
+        supabase.from("categories").select("*"),
       ]);
+
       return {
         accounts: accR.data ?? [],
         transactions: txR.data ?? [],
@@ -57,12 +61,23 @@ function Dashboard() {
         assets: assetsR.data ?? [],
         snapshots: snapsR.data ?? [],
         movements: movR.data ?? [],
+        audit: auditR.data ?? [],
+        categories: catsR.data ?? [],
       };
     },
     enabled: !!user,
   });
 
-  const tx = data?.transactions ?? [];
+  // Vinculação manual de dados para o Dashboard
+  const tx = useMemo(() => {
+    if (!data) return [];
+    return data.transactions.map((t: any) => ({
+      ...t,
+      categories: data.categories.find((c: any) => c.id === t.category_id),
+      accounts: data.accounts.find((a: any) => a.id === t.account_id),
+    }));
+  }, [data]);
+
   const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
@@ -93,17 +108,26 @@ function Dashboard() {
   }, [data]);
 
   const totalCardDebt = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
-    const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
-    const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-    const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-    return sum + txTotal + itemsTotal + initialBalance;
+    // Como não temos join aqui, o total_amount da fatura já deve estar atualizado pelo trigger
+    return sum + Number(inv.total_amount || 0);
   }, 0);
 
   const netWorth = totalCashBalance + portfolioValue - totalCardDebt;
 
+  const auditSummary = useMemo(() => {
+    if (!data?.audit) return { green: 0, yellow: 0, red: 0, total: 0 };
+    const counts = { green: 0, yellow: 0, red: 0, total: data.audit.length };
+    data.audit.forEach((a: any) => {
+      if (a.level === 'green') counts.green++;
+      else if (a.level === 'yellow') counts.yellow++;
+      else if (a.level === 'red') counts.red++;
+    });
+    return counts;
+  }, [data]);
+
   const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
-    (t.accounts?.type === "credit_card" || t.invoices?.id)
+    (t.accounts?.type === "credit_card" || t.invoice_id)
   ).reduce((s: number, t: any) => s + Number(t.amount), 0);
   
   const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
@@ -118,6 +142,9 @@ function Dashboard() {
     byCategory[k].total += Number(t.amount);
   });
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
+
+  const budget = Number(data?.profile?.monthly_budget || 0);
+  const budgetProgress = budget > 0 ? Math.min(100, (expense / budget) * 100) : 0;
 
   const paidOccBills = new Set((data?.occs ?? []).filter((o: any) => o.status === "paid").map((o: any) => o.fixed_bill_id));
   const pending = (data?.bills ?? []).filter((b: any) => !paidOccBills.has(b.id));
@@ -139,12 +166,8 @@ function Dashboard() {
         .reduce((s, t) => s + Number(t.amount), 0);
       const invoices = (data.openInvoices as any[])
         .filter((inv) => inv.reference_month === m && inv.reference_year === y)
-        .reduce((s, inv) => {
-          const txTotal = (inv.transactions || []).reduce((sum: number, t: any) => sum + Number(t.amount), 0);
-          const itemsTotal = (inv.invoice_items || []).reduce((sum: number, i: any) => s + Number(i.amount), 0);
-          const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-          return s + txTotal + itemsTotal + initialBalance;
-        }, 0);
+        .reduce((s, inv) => s + Number(inv.total_amount || 0), 0);
+      
       months.push({
         label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
         month: m,
@@ -212,6 +235,46 @@ function Dashboard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Audit Health Summary */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="md:col-span-2 rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Target className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Orçamento Mensal</span>
+            </div>
+            <span className="text-xs text-muted-foreground font-mono">
+              {formatBRL(expense)} / {formatBRL(budget)}
+            </span>
+          </div>
+          <Progress value={budgetProgress} className="h-2" />
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground uppercase tracking-wider">
+            <span>{budgetProgress.toFixed(0)}% consumido</span>
+            <span>{formatBRL(budget - expense)} restante</span>
+          </div>
+        </div>
+        
+        <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-primary" />
+              <span className="text-sm font-medium">Saúde da Auditoria</span>
+            </div>
+            <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:translate-x-1 transition-transform" />
+          </div>
+          <div className="flex items-center gap-1.5 h-2 rounded-full bg-surface-2 overflow-hidden">
+            <div className="h-full bg-audit-green" style={{ width: `${auditSummary.total > 0 ? (auditSummary.green / auditSummary.total) * 100 : 0}%` }} />
+            <div className="h-full bg-audit-yellow" style={{ width: `${auditSummary.total > 0 ? (auditSummary.yellow / auditSummary.total) * 100 : 0}%` }} />
+            <div className="h-full bg-audit-red" style={{ width: `${auditSummary.total > 0 ? (auditSummary.red / auditSummary.total) * 100 : 0}%` }} />
+          </div>
+          <div className="mt-2 flex justify-between text-[10px] text-muted-foreground uppercase tracking-wider">
+            <span className="text-audit-green">{auditSummary.green} ok</span>
+            <span className="text-audit-yellow">{auditSummary.yellow} atenção</span>
+            <span className="text-audit-red">{auditSummary.red} crítico</span>
+          </div>
+        </Link>
+      </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
@@ -294,15 +357,12 @@ function Dashboard() {
                 const days = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
                 const urgent = days >= 0 && days <= 5;
                 const overdue = days < 0;
-                const txTotal = (inv.transactions || []).reduce((s: number, t: any) => s + Number(t.amount), 0);
-                const itemsTotal = (inv.invoice_items || []).reduce((s: number, i: any) => s + Number(i.amount), 0);
-                const initialBalance = (data?.initialBalances || []).find((b: any) => b.invoice_id === inv.id)?.initial_balance || 0;
-                const total = txTotal + itemsTotal + initialBalance;
+                const acc = data.accounts.find((a: any) => a.id === inv.account_id);
                 return (
                   <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg bg-surface-2 border border-border">
                     <div className="min-w-0">
                       <div className="font-medium truncate flex items-center gap-2">
-                        {inv.accounts?.name}
+                        {acc?.name || "Cartão"}
                         {overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-red/20 text-audit-red">vencida</span>}
                         {urgent && !overdue && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow">{days}d</span>}
                       </div>
@@ -310,7 +370,7 @@ function Dashboard() {
                         vence {new Date(inv.due_date + "T12:00:00").toLocaleDateString("pt-BR")}
                       </div>
                     </div>
-                    <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(total)}</div>
+                    <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount || 0))}</div>
                   </div>
                 );
               })}

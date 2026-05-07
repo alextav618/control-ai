@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -10,68 +10,109 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, CreditCard, Wallet, Trash2, Pencil } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Plus, CreditCard, Wallet, Trash2, Pencil, Landmark, Banknote, ArrowRightLeft, Receipt, Coins, Link as LinkIcon, CreditCard as CardIcon } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/accounts")({
   component: AccountsPage,
 });
 
-const types = [
-  { value: "cash", label: "Dinheiro" },
-  { value: "checking", label: "Conta corrente" },
-  { value: "savings", label: "Poupança" },
-  { value: "credit_card", label: "Cartão de crédito" },
-  { value: "other", label: "Outro" },
+const ACCOUNT_TYPES = [
+  { value: "checking", label: "Conta Corrente", icon: Landmark },
+  { value: "savings", label: "Poupança / Investimento", icon: Coins },
+  { value: "cash", label: "Dinheiro / Carteira", icon: Banknote },
+  { value: "other", label: "Outros", icon: Wallet },
 ];
 
-const emptyForm = { name: "", type: "checking", current_balance: "0", closing_day: "", due_day: "", credit_limit: "" };
+const CARD_TYPES = [
+  { value: "credit_only", label: "Crédito", icon: CreditCard },
+  { value: "debit_only", label: "Débito", icon: CardIcon },
+  { value: "multi", label: "Crédito e Débito", icon: ArrowRightLeft },
+];
+
+const emptyForm = { name: "", card_mode: "credit_only", current_balance: "0", closing_day: "1", due_day: "10", credit_limit: "", linked_account_id: "" };
 
 function AccountsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const [activeTab, setActiveTab] = useState("accounts");
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState<any>(emptyForm);
   const [confirmDel, setConfirmDel] = useState<any>(null);
 
-  useEffect(() => { if (!open) { setEditId(null); setForm(emptyForm); } }, [open]);
-
-  const { data: accounts = [] } = useQuery({
+  const { data: accounts = [], isLoading } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false).order("created_at");
+      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false).order("name");
       if (error) throw error;
       return data;
     },
     enabled: !!user,
   });
 
+  useEffect(() => { 
+    if (!open) { 
+      setEditId(null); 
+      setForm({ 
+        ...emptyForm, 
+        type: activeTab === "cards" ? "credit_card" : "checking",
+        card_mode: activeTab === "cards" ? "credit_only" : "checking"
+      }); 
+    } 
+  }, [open, activeTab]);
+
+  const filteredAccounts = useMemo(() => accounts.filter(a => a.type !== "credit_card"), [accounts]);
+  const filteredCards = useMemo(() => accounts.filter(a => a.type === "credit_card"), [accounts]);
+
   const openEdit = (a: any) => {
     setEditId(a.id);
+    // Determina o card_mode baseado nos dados existentes
+    let mode = "credit_only";
+    if (a.type === "credit_card" && a.linked_account_id) mode = "multi";
+    else if (a.type !== "credit_card") mode = "debit_only";
+
     setForm({
       name: a.name,
       type: a.type,
+      card_mode: mode,
       current_balance: String(a.current_balance ?? "0"),
-      closing_day: a.closing_day ? String(a.closing_day) : "",
-      due_day: a.due_day ? String(a.due_day) : "",
+      closing_day: a.closing_day ? String(a.closing_day) : "1",
+      due_day: a.due_day ? String(a.due_day) : "10",
       credit_limit: a.credit_limit ? String(a.credit_limit) : "",
+      linked_account_id: a.linked_account_id ?? "",
     });
     setOpen(true);
   };
 
   const submit = async () => {
     if (!user || !form.name) { toast.error("Informe o nome"); return; }
+    
     const payload: any = {
       name: form.name,
-      type: form.type,
-      current_balance: Number(form.current_balance) || 0,
+      linked_account_id: form.linked_account_id === "none" ? null : (form.linked_account_id || null),
     };
-    if (form.type === "credit_card") {
-      payload.closing_day = Number(form.closing_day) || 1;
-      payload.due_day = Number(form.due_day) || 10;
-      payload.credit_limit = form.credit_limit ? Number(form.credit_limit) : null;
+
+    // Lógica de mapeamento baseada na escolha do usuário
+    if (activeTab === "cards") {
+      if (form.card_mode === "debit_only") {
+        payload.type = "checking"; // No banco, um cartão de débito puro é tratado como uma conta
+        payload.current_balance = Number(form.current_balance) || 0;
+        payload.closing_day = null;
+        payload.due_day = null;
+        payload.credit_limit = null;
+      } else {
+        payload.type = "credit_card";
+        payload.closing_day = Number(form.closing_day) || 1;
+        payload.due_day = Number(form.due_day) || 10;
+        payload.credit_limit = form.credit_limit ? Number(form.credit_limit) : null;
+        payload.current_balance = 0; // Cartão de crédito não tem saldo positivo próprio
+      }
     } else {
+      payload.type = form.type;
+      payload.current_balance = Number(form.current_balance) || 0;
       payload.closing_day = null;
       payload.due_day = null;
       payload.credit_limit = null;
@@ -80,115 +121,246 @@ function AccountsPage() {
     if (editId) {
       const { error } = await supabase.from("accounts").update(payload).eq("id", editId);
       if (error) { toast.error(error.message); return; }
-      toast.success("Conta atualizada");
+      toast.success("Atualizado com sucesso");
     } else {
       const { error } = await supabase.from("accounts").insert({ user_id: user.id, ...payload });
       if (error) { toast.error(error.message); return; }
-      toast.success("Conta criada");
+      toast.success("Criado com sucesso");
     }
     setOpen(false);
     qc.invalidateQueries({ queryKey: ["accounts"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
   };
 
   const confirmRemove = async () => {
     if (!confirmDel) return;
     const { error } = await supabase.from("accounts").update({ archived: true }).eq("id", confirmDel.id);
-    if (error) toast.error(error.message);
-    else {
-      toast.success("Conta excluída");
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-    }
+    if (error) { toast.error(error.message); }
+    else { toast.success("Excluído com sucesso"); qc.invalidateQueries({ queryKey: ["accounts"] }); }
     setConfirmDel(null);
   };
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-6 gap-3">
-        <h1 className="font-display text-2xl md:text-3xl font-bold">Contas e Cartões</h1>
+        <div>
+          <h1 className="font-display text-2xl md:text-3xl font-bold">Contas e Cartões</h1>
+          <p className="text-sm text-muted-foreground mt-1">Gerencie suas disponibilidades e limites.</p>
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" /> Nova</Button></DialogTrigger>
+          <DialogTrigger asChild>
+            <Button className="shadow-glow">
+              <Plus className="h-4 w-4 mr-2" /> {activeTab === "cards" ? "Novo Cartão" : "Nova Conta"}
+            </Button>
+          </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{editId ? "Editar conta" : "Nova conta ou cartão"}</DialogTitle>
-              <DialogDescription>{editId ? "Atualize os dados da conta." : "Cadastre uma conta ou cartão para vincular aos lançamentos."}</DialogDescription>
+              <DialogTitle>{editId ? "Editar" : "Cadastrar"} {activeTab === "cards" ? "Cartão" : "Conta"}</DialogTitle>
+              <DialogDescription>Preencha os dados para organizar seus lançamentos.</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
-              <div><Label>Nome</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Nubank Crédito" className="mt-1.5" /></div>
-              <div><Label>Tipo</Label>
-                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                  <SelectContent>{types.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
-                </Select>
+            <div className="space-y-4 pt-2">
+              <div>
+                <Label>Nome</Label>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Nubank, Itaú, Carteira" className="mt-1.5" />
               </div>
-              {form.type === "credit_card" ? (
-                <div className="grid grid-cols-3 gap-3">
-                  <div><Label>Fecha dia</Label><Input type="number" min={1} max={31} value={form.closing_day} onChange={(e) => setForm({ ...form, closing_day: e.target.value })} className="mt-1.5" /></div>
-                  <div><Label>Vence dia</Label><Input type="number" min={1} max={31} value={form.due_day} onChange={(e) => setForm({ ...form, due_day: e.target.value })} className="mt-1.5" /></div>
-                  <div><Label>Limite</Label><Input type="number" value={form.credit_limit} onChange={(e) => setForm({ ...form, credit_limit: e.target.value })} className="mt-1.5" /></div>
-                </div>
+              
+              {activeTab === "cards" ? (
+                <>
+                  <div>
+                    <Label>Função do Cartão</Label>
+                    <Select value={form.card_mode} onValueChange={(v) => setForm({ ...form, card_mode: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {CARD_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {(form.card_mode === "debit_only" || form.card_mode === "multi") && (
+                    <div className="animate-in slide-in-from-top-2 space-y-4">
+                      <div>
+                        <Label>Conta Vinculada (para Débito)</Label>
+                        <Select value={form.linked_account_id} onValueChange={(v) => setForm({ ...form, linked_account_id: v })}>
+                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a conta bancária" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Nenhuma (Saldo próprio)</SelectItem>
+                            {filteredAccounts.map((a) => (
+                              <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {form.card_mode === "debit_only" && form.linked_account_id === "none" && (
+                        <div>
+                          <Label>Saldo Inicial do Cartão (R$)</Label>
+                          <Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(form.card_mode === "credit_only" || form.card_mode === "multi") && (
+                    <div className="space-y-4 animate-in slide-in-from-top-2">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <Label>Dia de Fechamento</Label>
+                          <Input type="number" min={1} max={31} value={form.closing_day} onChange={(e) => setForm({ ...form, closing_day: e.target.value })} className="mt-1.5" />
+                        </div>
+                        <div>
+                          <Label>Dia de Vencimento</Label>
+                          <Input type="number" min={1} max={31} value={form.due_day} onChange={(e) => setForm({ ...form, due_day: e.target.value })} className="mt-1.5" />
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Limite de Crédito (R$)</Label>
+                        <Input type="number" value={form.credit_limit} onChange={(e) => setForm({ ...form, credit_limit: e.target.value })} placeholder="Opcional" className="mt-1.5" />
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div><Label>Saldo atual</Label><Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" /></div>
+                <>
+                  <div>
+                    <Label>Tipo de Conta</Label>
+                    <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {ACCOUNT_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="animate-in slide-in-from-top-2">
+                    <Label>Saldo Atual (R$)</Label>
+                    <Input type="number" step="0.01" value={form.current_balance} onChange={(e) => setForm({ ...form, current_balance: e.target.value })} className="mt-1.5" />
+                  </div>
+                </>
               )}
-              <Button onClick={submit} className="w-full">{editId ? "Salvar alterações" : "Criar"}</Button>
+              
+              <Button onClick={submit} className="w-full mt-2">{editId ? "Salvar Alterações" : "Cadastrar"}</Button>
             </div>
           </DialogContent>
         </Dialog>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-4">
-        {accounts.length === 0 && <div className="text-muted-foreground text-sm sm:col-span-2">Cadastre suas contas e cartões para a IA conseguir vincular os lançamentos corretamente.</div>}
-        {accounts.map((a: any) => {
-          const isCard = a.type === "credit_card";
-          const Icon = isCard ? CreditCard : Wallet;
-          return (
-            <div key={a.id} className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="h-10 w-10 rounded-lg bg-surface-2 flex items-center justify-center shrink-0"><Icon className="h-5 w-5 text-primary" /></div>
-                  <div className="min-w-0">
-                    <div className="font-display font-semibold truncate">{a.name}</div>
-                    <div className="text-xs text-muted-foreground">{types.find((t) => t.value === a.type)?.label}</div>
-                  </div>
-                </div>
-                <div className="flex items-center shrink-0">
-                  <Button variant="ghost" size="icon" onClick={() => openEdit(a)} title="Editar"><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                  <Button variant="ghost" size="icon" onClick={() => setConfirmDel(a)} title="Excluir"><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>
-                </div>
-              </div>
-              <div className="mt-4">
-                {isCard ? (
-                  <div className="text-sm text-muted-foreground space-y-1">
-                    <div>Fecha dia <span className="text-foreground font-medium">{a.closing_day ?? "—"}</span> · vence dia <span className="text-foreground font-medium">{a.due_day ?? "—"}</span></div>
-                    {a.credit_limit && <div>Limite: <span className="font-mono tabular text-foreground">{formatBRL(Number(a.credit_limit))}</span></div>}
-                  </div>
-                ) : (
-                  <div className="font-mono tabular text-2xl font-semibold">{formatBRL(Number(a.current_balance))}</div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsTrigger value="accounts" className="flex items-center gap-2">
+            <Wallet className="h-4 w-4" /> Contas
+          </TabsTrigger>
+          <TabsTrigger value="cards" className="flex items-center gap-2">
+            <CreditCard className="h-4 w-4" /> Cartões
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="accounts" className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            {isLoading ? (
+              <div className="col-span-2 py-10 text-center text-muted-foreground">Carregando contas...</div>
+            ) : filteredAccounts.length === 0 ? (
+              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">Nenhuma conta cadastrada.</div>
+            ) : (
+              filteredAccounts.map((a) => (
+                <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} />
+              ))
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="cards" className="space-y-4">
+          <div className="grid sm:grid-cols-2 gap-4">
+            {isLoading ? (
+              <div className="col-span-2 py-10 text-center text-muted-foreground">Carregando cartões...</div>
+            ) : filteredCards.length === 0 ? (
+              <div className="col-span-2 py-10 text-center text-muted-foreground border border-dashed rounded-2xl">Nenhum cartão cadastrado.</div>
+            ) : (
+              filteredCards.map((a) => (
+                <AccountCard key={a.id} account={a} onEdit={() => openEdit(a)} onDelete={() => setConfirmDel(a)} accounts={accounts} />
+              ))
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
       <AlertDialog open={!!confirmDel} onOpenChange={(v) => !v && setConfirmDel(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir "{confirmDel?.name}"?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação removerá a conta da sua visão e ela <strong>não aparecerá mais no dashboard, faturas ou lançamentos</strong>.
-              O histórico de transações vinculado a ela permanece registrado para fins de auditoria, mas a conta em si será excluída permanentemente.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Esta ação arquivará a conta. O histórico de transações será mantido.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmRemove} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir permanentemente</AlertDialogAction>
+            <AlertDialogAction onClick={confirmRemove} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function AccountCard({ account, onEdit, onDelete, accounts }: { account: any; onEdit: () => void; onDelete: () => void; accounts?: any[] }) {
+  const isCard = account.type === "credit_card";
+  const linkedAccount = accounts?.find(a => a.id === account.linked_account_id);
+  
+  // Determina o ícone e label
+  let Icon = Wallet;
+  let label = "Conta";
+  
+  if (isCard) {
+    Icon = CreditCard;
+    label = linkedAccount ? "Cartão Múltiplo" : "Cartão de Crédito";
+  } else {
+    const typeMatch = ACCOUNT_TYPES.find(t => t.value === account.type);
+    if (typeMatch) {
+      Icon = typeMatch.icon;
+      label = typeMatch.label;
+    }
+  }
+  
+  return (
+    <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:shadow-elegant transition-all group">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
+            <Icon className="h-5 w-5 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <div className="font-display font-semibold truncate">{account.name}</div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+              {label}
+              {linkedAccount && <><LinkIcon className="h-2 w-2" /> {linkedAccount.name}</>}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button variant="ghost" size="icon" onClick={onEdit}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+          <Button variant="ghost" size="icon" onClick={onDelete}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
+        </div>
+      </div>
+      
+      <div className="mt-4">
+        {isCard ? (
+          <div className="space-y-3">
+            <div className="flex justify-between items-end">
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase">Limite</div>
+                <div className="font-mono font-bold text-lg tabular">{account.credit_limit ? formatBRL(Number(account.credit_limit)) : "—"}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] text-muted-foreground uppercase">Fechamento / Vencimento</div>
+                <div className="text-sm font-medium">Dia {account.closing_day} / Dia {account.due_day}</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase mb-1">Saldo Disponível</div>
+            <div className="font-mono tabular text-2xl font-bold">{formatBRL(Number(account.current_balance))}</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

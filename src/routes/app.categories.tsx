@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,9 +21,9 @@ function CategoriesPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ name: "", kind: "expense", icon: "📦", color: "#94a3b8" });
   const [editing, setEditing] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState<{ name: string; icon: string }>({ name: "", icon: "" });
+  const [editForm, setEditForm] = useState({ name: "", icon: "" });
 
-  const { data: cats = [] } = useQuery({
+  const { data: cats = [], isLoading } = useQuery({
     queryKey: ["categories", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("categories").select("*").order("kind").order("name");
