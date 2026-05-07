@@ -333,6 +333,11 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     console.error("[chat-ai] Uncaught error:", e);
+    // Log the error details for debugging
+    if (e instanceof Error) {
+      console.error(`[chat-ai] Error message: ${e.message}`);
+      console.error(`[chat-ai] Error stack: ${e.stack}`);
+    }
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "unknown error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
