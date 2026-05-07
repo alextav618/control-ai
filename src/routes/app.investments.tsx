@@ -74,10 +74,7 @@ function InvestmentsPage() {
     queryKey: ["assets", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_assets").select("*").eq("archived", false).order("created_at", { ascending: false });
-      if (error) {
-        console.error('Erro Supabase (fetch assets):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -87,8 +84,8 @@ function InvestmentsPage() {
     queryKey: ["accounts_for_invest", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("accounts").select("id,name,type,icon").eq("archived", false).order("name");
-      if (error) console.error('Erro Supabase (fetch accounts):', error);
-      return data ?? [];
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -97,7 +94,7 @@ function InvestmentsPage() {
     queryKey: ["index_rates"],
     queryFn: async () => {
       const { data, error } = await (supabase as any).from("index_rates").select("*");
-      if (error) console.error('Erro Supabase (fetch index_rates):', error);
+      if (error) throw error;
       return (data || []) as Array<{ code: string; annual_rate: number; reference_date: string; updated_at: string; source: string | null }>;
     },
     refetchOnWindowFocus: false,
@@ -121,8 +118,7 @@ function InvestmentsPage() {
       if (!res.ok) throw new Error();
       toast.success("Taxas atualizadas", { id: "rates" });
       qc.invalidateQueries({ queryKey: ["index_rates"] });
-    } catch (e) {
-      console.error('Erro ao atualizar taxas via API:', e);
+    } catch {
       toast.error("Falha ao atualizar taxas", { id: "rates" });
     }
   };
@@ -131,8 +127,8 @@ function InvestmentsPage() {
     queryKey: ["all_movements", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_movements").select("*");
-      if (error) console.error('Erro Supabase (fetch all movements):', error);
-      return data ?? [];
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -141,8 +137,8 @@ function InvestmentsPage() {
     queryKey: ["all_snapshots", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false });
-      if (error) console.error('Erro Supabase (fetch all snapshots):', error);
-      return data ?? [];
+      if (error) throw error;
+      return data;
     },
     enabled: !!user,
   });
@@ -209,10 +205,7 @@ function InvestmentsPage() {
       ticker: assetForm.ticker || null,
       maturity_date: assetForm.maturity_date || null,
     } as any);
-    if (error) {
-      console.error('Erro Supabase (create asset):', error);
-      return toast.error(error.message);
-    }
+    if (error) return toast.error(error.message);
     toast.success("Ativo criado");
     setOpenAsset(false);
     setAssetForm({ name: "", type: "fixed_income", indexer: "cdi", rate: "", account_id: "", ticker: "", maturity_date: "" });
@@ -222,14 +215,8 @@ function InvestmentsPage() {
   const archiveAsset = async (id: string) => {
     if (!confirm("Arquivar este ativo? O histórico fica preservado.")) return;
     const { error } = await supabase.from("investment_assets").update({ archived: true }).eq("id", id);
-    if (error) {
-      console.error('Erro Supabase (archive asset):', error);
-      toast.error(error.message);
-    } else { 
-      toast.success("Arquivado"); 
-      qc.invalidateQueries({ queryKey: ["assets"] }); 
-      setSelectedId(null); 
-    }
+    if (error) toast.error(error.message);
+    else { toast.success("Arquivado"); qc.invalidateQueries({ queryKey: ["assets"] }); setSelectedId(null); }
   };
 
   if (selectedId) {
@@ -408,10 +395,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
     queryKey: ["movements", asset.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_movements").select("*").eq("asset_id", asset.id).order("occurred_on", { ascending: false });
-      if (error) {
-        console.error('Erro Supabase (fetch movements):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
   });
@@ -420,10 +404,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
     queryKey: ["snapshots", asset.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("investment_snapshots").select("*").eq("asset_id", asset.id).order("snapshot_date", { ascending: false });
-      if (error) {
-        console.error('Erro Supabase (fetch snapshots):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
   });
@@ -446,10 +427,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
       occurred_on: movForm.occurred_on,
       notes: movForm.notes || null,
     });
-    if (error) {
-      console.error('Erro Supabase (add movement):', error);
-      return toast.error(error.message);
-    }
+    if (error) return toast.error(error.message);
     toast.success("Movimentação registrada");
     setOpenMov(false);
     setMovForm({ type: "deposit", amount: "", occurred_on: localDateString(), notes: "" });
@@ -464,10 +442,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
       snapshot_date: snapForm.snapshot_date,
       market_value: Number(snapForm.market_value),
     }, { onConflict: "asset_id,snapshot_date" });
-    if (error) {
-      console.error('Erro Supabase (upsert snapshot):', error);
-      return toast.error(error.message);
-    }
+    if (error) return toast.error(error.message);
     toast.success("Posição atualizada");
     setOpenSnap(false);
     setSnapForm({ market_value: "", snapshot_date: localDateString() });
@@ -477,24 +452,14 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
 
   const removeMov = async (id: string) => {
     const { error } = await supabase.from("investment_movements").delete().eq("id", id);
-    if (error) {
-      console.error('Erro Supabase (delete movement):', error);
-      toast.error(error.message);
-    } else { 
-      qc.invalidateQueries({ queryKey: ["movements", asset.id] }); 
-      qc.invalidateQueries({ queryKey: ["all_movements"] }); 
-    }
+    if (error) toast.error(error.message);
+    else { qc.invalidateQueries({ queryKey: ["movements", asset.id] }); qc.invalidateQueries({ queryKey: ["all_movements"] }); }
   };
 
   const removeSnap = async (id: string) => {
     const { error } = await supabase.from("investment_snapshots").delete().eq("id", id);
-    if (error) {
-      console.error('Erro Supabase (delete snapshot):', error);
-      toast.error(error.message);
-    } else { 
-      qc.invalidateQueries({ queryKey: ["snapshots", asset.id] }); 
-      qc.invalidateQueries({ queryKey: ["all_snapshots"] }); 
-    }
+    if (error) toast.error(error.message);
+    else { qc.invalidateQueries({ queryKey: ["snapshots", asset.id] }); qc.invalidateQueries({ queryKey: ["all_snapshots"] }); }
   };
 
   return (
@@ -511,7 +476,7 @@ function AssetDetail({ asset, accounts, ratesMap, onBack, onArchive, position }:
             <span>{ASSET_TYPES[asset.type]}</span>
             {asset.indexer !== "none" && <><span>·</span><span>{asset.rate ?? "—"} {INDEXERS[asset.indexer]}</span></>}
             {eff != null && <><span>·</span><span className="text-primary">≈ {eff.toFixed(2)}% a.a.</span></>}
-            {account && <><span>·</span><span>{account.name}</span></>}
+            {account && <><span>·</span><span>{account.icon ? `${account.icon} ` : ""}{account.name}</span></>}
             {asset.maturity_date && <><span>·</span><span>vence {formatDateBR(asset.maturity_date)}</span></>}
           </div>
         </div>

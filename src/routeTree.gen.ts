@@ -14,17 +14,14 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppTransactionsRouteImport } from './routes/app.transactions'
-import { Route as AppReportsRouteImport } from './routes/app.reports'
 import { Route as AppProfilesRouteImport } from './routes/app.profiles'
 import { Route as AppInvoicesRouteImport } from './routes/app.invoices'
 import { Route as AppInvestmentsRouteImport } from './routes/app.investments'
-import { Route as AppInstallmentsRouteImport } from './routes/app.installments'
 import { Route as AppInsightsRouteImport } from './routes/app.insights'
 import { Route as AppGoalsRouteImport } from './routes/app.goals'
 import { Route as AppDashboardRouteImport } from './routes/app.dashboard'
 import { Route as AppCategoriesRouteImport } from './routes/app.categories'
 import { Route as AppBillsRouteImport } from './routes/app.bills'
-import { Route as AppAuditRouteImport } from './routes/app.audit'
 import { Route as AppAccountsRouteImport } from './routes/app.accounts'
 import { Route as ApiPublicHooksUpdateRatesRouteImport } from './routes/api/public/hooks/update-rates'
 
@@ -53,11 +50,6 @@ const AppTransactionsRoute = AppTransactionsRouteImport.update({
   path: '/transactions',
   getParentRoute: () => AppRoute,
 } as any)
-const AppReportsRoute = AppReportsRouteImport.update({
-  id: '/reports',
-  path: '/reports',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppProfilesRoute = AppProfilesRouteImport.update({
   id: '/profiles',
   path: '/profiles',
@@ -71,11 +63,6 @@ const AppInvoicesRoute = AppInvoicesRouteImport.update({
 const AppInvestmentsRoute = AppInvestmentsRouteImport.update({
   id: '/investments',
   path: '/investments',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppInstallmentsRoute = AppInstallmentsRouteImport.update({
-  id: '/installments',
-  path: '/installments',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInsightsRoute = AppInsightsRouteImport.update({
@@ -103,11 +90,6 @@ const AppBillsRoute = AppBillsRouteImport.update({
   path: '/bills',
   getParentRoute: () => AppRoute,
 } as any)
-const AppAuditRoute = AppAuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAccountsRoute = AppAccountsRouteImport.update({
   id: '/accounts',
   path: '/accounts',
@@ -125,17 +107,14 @@ export interface FileRoutesByFullPath {
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
-  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
-  '/app/reports': typeof AppReportsRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -144,17 +123,14 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
-  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
-  '/app/reports': typeof AppReportsRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -165,17 +141,14 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/app/accounts': typeof AppAccountsRoute
-  '/app/audit': typeof AppAuditRoute
   '/app/bills': typeof AppBillsRoute
   '/app/categories': typeof AppCategoriesRoute
   '/app/dashboard': typeof AppDashboardRoute
   '/app/goals': typeof AppGoalsRoute
   '/app/insights': typeof AppInsightsRoute
-  '/app/installments': typeof AppInstallmentsRoute
   '/app/investments': typeof AppInvestmentsRoute
   '/app/invoices': typeof AppInvoicesRoute
   '/app/profiles': typeof AppProfilesRoute
-  '/app/reports': typeof AppReportsRoute
   '/app/transactions': typeof AppTransactionsRoute
   '/app/': typeof AppIndexRoute
   '/api/public/hooks/update-rates': typeof ApiPublicHooksUpdateRatesRoute
@@ -187,17 +160,14 @@ export interface FileRouteTypes {
     | '/app'
     | '/auth'
     | '/app/accounts'
-    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
-    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
-    | '/app/reports'
     | '/app/transactions'
     | '/app/'
     | '/api/public/hooks/update-rates'
@@ -206,17 +176,14 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/app/accounts'
-    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
-    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
-    | '/app/reports'
     | '/app/transactions'
     | '/app'
     | '/api/public/hooks/update-rates'
@@ -226,17 +193,14 @@ export interface FileRouteTypes {
     | '/app'
     | '/auth'
     | '/app/accounts'
-    | '/app/audit'
     | '/app/bills'
     | '/app/categories'
     | '/app/dashboard'
     | '/app/goals'
     | '/app/insights'
-    | '/app/installments'
     | '/app/investments'
     | '/app/invoices'
     | '/app/profiles'
-    | '/app/reports'
     | '/app/transactions'
     | '/app/'
     | '/api/public/hooks/update-rates'
@@ -286,13 +250,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTransactionsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/reports': {
-      id: '/app/reports'
-      path: '/reports'
-      fullPath: '/app/reports'
-      preLoaderRoute: typeof AppReportsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/profiles': {
       id: '/app/profiles'
       path: '/profiles'
@@ -312,13 +269,6 @@ declare module '@tanstack/react-router' {
       path: '/investments'
       fullPath: '/app/investments'
       preLoaderRoute: typeof AppInvestmentsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/installments': {
-      id: '/app/installments'
-      path: '/installments'
-      fullPath: '/app/installments'
-      preLoaderRoute: typeof AppInstallmentsRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/insights': {
@@ -356,13 +306,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppBillsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/audit': {
-      id: '/app/audit'
-      path: '/audit'
-      fullPath: '/app/audit'
-      preLoaderRoute: typeof AppAuditRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/accounts': {
       id: '/app/accounts'
       path: '/accounts'
@@ -382,34 +325,28 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
-  AppAuditRoute: typeof AppAuditRoute
   AppBillsRoute: typeof AppBillsRoute
   AppCategoriesRoute: typeof AppCategoriesRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppGoalsRoute: typeof AppGoalsRoute
   AppInsightsRoute: typeof AppInsightsRoute
-  AppInstallmentsRoute: typeof AppInstallmentsRoute
   AppInvestmentsRoute: typeof AppInvestmentsRoute
   AppInvoicesRoute: typeof AppInvoicesRoute
   AppProfilesRoute: typeof AppProfilesRoute
-  AppReportsRoute: typeof AppReportsRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
-  AppAuditRoute: AppAuditRoute,
   AppBillsRoute: AppBillsRoute,
   AppCategoriesRoute: AppCategoriesRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppGoalsRoute: AppGoalsRoute,
   AppInsightsRoute: AppInsightsRoute,
-  AppInstallmentsRoute: AppInstallmentsRoute,
   AppInvestmentsRoute: AppInvestmentsRoute,
   AppInvoicesRoute: AppInvoicesRoute,
   AppProfilesRoute: AppProfilesRoute,
-  AppReportsRoute: AppReportsRoute,
   AppTransactionsRoute: AppTransactionsRoute,
   AppIndexRoute: AppIndexRoute,
 }

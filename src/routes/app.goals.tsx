@@ -27,10 +27,7 @@ function GoalsPage() {
     queryKey: ["goals", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("goals").select("*").order("created_at", { ascending: false });
-      if (error) {
-        console.error('Erro Supabase (fetch goals):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -53,19 +50,11 @@ function GoalsPage() {
 
     if (editId) {
       const { error } = await supabase.from("goals").update(payload).eq("id", editId);
-      if (error) { 
-        console.error('Erro Supabase (update goal):', error);
-        toast.error(error.message); 
-        return; 
-      }
+      if (error) { toast.error(error.message); return; }
       toast.success("Meta atualizada");
     } else {
-      const { error } = await (supabase as any).from("goals").insert(payload);
-      if (error) { 
-        console.error('Erro Supabase (create goal):', error);
-        toast.error(error.message); 
-        return; 
-      }
+      const { error } = await supabase.from("goals").insert(payload);
+      if (error) { toast.error(error.message); return; }
       toast.success("Meta criada");
     }
 
@@ -77,11 +66,9 @@ function GoalsPage() {
 
   const remove = async (id: string) => {
     if (!confirm("Excluir esta meta?")) return;
-    const { error } = await (supabase as any).from("goals").delete().eq("id", id);
-    if (error) {
-      console.error('Erro Supabase (delete goal):', error);
-      toast.error(error.message);
-    } else {
+    const { error } = await supabase.from("goals").delete().eq("id", id);
+    if (error) toast.error(error.message);
+    else {
       toast.success("Meta excluída");
       qc.invalidateQueries({ queryKey: ["goals"] });
     }

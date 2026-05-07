@@ -30,10 +30,7 @@ function BillsPage() {
     queryKey: ["bills", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("fixed_bills").select("*").eq("active", true).order("due_day");
-      if (error) {
-        console.error('Erro Supabase (fetch bills):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -47,10 +44,7 @@ function BillsPage() {
         .select("*")
         .eq("reference_month", ref.month)
         .eq("reference_year", ref.year);
-      if (error) {
-        console.error('Erro Supabase (fetch occurrences):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -59,8 +53,7 @@ function BillsPage() {
   const { data: cats = [] } = useQuery({
     queryKey: ["categories", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("categories").select("*").eq("kind", "expense");
-      if (error) console.error('Erro Supabase (fetch categories):', error);
+      const { data } = await supabase.from("categories").select("*").eq("kind", "expense");
       return data ?? [];
     },
     enabled: !!user,
@@ -69,8 +62,7 @@ function BillsPage() {
   const { data: accounts = [] } = useQuery({
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
-      if (error) console.error('Erro Supabase (fetch accounts):', error);
+      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
       return data ?? [];
     },
     enabled: !!user,
@@ -91,10 +83,8 @@ function BillsPage() {
       category_id: form.category_id || null,
       default_account_id: form.default_account_id || null,
     });
-    if (error) {
-      console.error('Erro Supabase (create fixed_bill):', error);
-      toast.error(error.message);
-    } else {
+    if (error) toast.error(error.message);
+    else {
       toast.success("Recorrente criada");
       setOpen(false);
       setForm({ name: "", expected_amount: "", due_day: "", amount_kind: "fixed", category_id: "", default_account_id: "" });
@@ -104,26 +94,20 @@ function BillsPage() {
 
   const remove = async (id: string) => {
     const { error } = await supabase.from("fixed_bills").update({ active: false }).eq("id", id);
-    if (error) {
-      console.error('Erro Supabase (archive fixed_bill):', error);
-      toast.error(error.message);
-    } else { 
-      toast.success("Removida"); 
-      qc.invalidateQueries({ queryKey: ["bills"] }); 
-    }
+    if (error) toast.error(error.message);
+    else { toast.success("Removida"); qc.invalidateQueries({ queryKey: ["bills"] }); }
   };
 
   const markPaid = async (bill: any, amountValue: number) => {
     if (!user) return;
     if (!amountValue || amountValue <= 0) { toast.error("Informe o valor"); return; }
-    
+    const today = new Date();
     const occurredOn = `${ref.year}-${String(ref.month).padStart(2, "0")}-${String(Math.min(bill.due_day, 28)).padStart(2, "0")}`;
-    
     // Cria a transação
     const { data: tx, error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "expense",
-      amount: Number(amountValue),
+      amount: amountValue,
       description: `${bill.name} (${monthNames[ref.month - 1]}/${ref.year})`,
       occurred_on: occurredOn,
       account_id: bill.default_account_id ?? null,
@@ -132,28 +116,19 @@ function BillsPage() {
       status: "paid",
       source: "manual",
     }).select().single();
-    
-    if (txErr) { 
-      console.error('Erro Supabase (create transaction from bill):', txErr);
-      toast.error(txErr.message); 
-      return; 
-    }
-    
+    if (txErr) { toast.error(txErr.message); return; }
     // Upsert da ocorrência
     const { error: occErr } = await supabase.from("recurring_occurrences").upsert({
       user_id: user.id,
       fixed_bill_id: bill.id,
       reference_month: ref.month,
       reference_year: ref.year,
-      amount: Number(amountValue),
+      amount: amountValue,
       status: "paid",
       transaction_id: tx.id,
     }, { onConflict: "fixed_bill_id,reference_month,reference_year" });
-    
-    if (occErr) {
-      console.error('Erro Supabase (upsert occurrence):', occErr);
-      toast.error(occErr.message);
-    } else {
+    if (occErr) toast.error(occErr.message);
+    else {
       toast.success("Lançado");
       setPayOpen(null);
       setPayAmount("");
@@ -161,6 +136,7 @@ function BillsPage() {
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
     }
+    void today;
   };
 
   return (
@@ -250,7 +226,7 @@ function BillsPage() {
                     </span>
                     {!paid && (
                       <Button size="sm" variant="outline" onClick={() => { setPayOpen(b.id); setPayAmount(isVar ? "" : String(b.expected_amount)); }}>
-                        <Check className="h-3.5 w-3.5 mr-1.5" /> Lançar
+                        <Check className="h-3.5 w-3.5 mr-1" /> Lançar
                       </Button>
                     )}
                     <Button size="icon" variant="ghost" onClick={() => remove(b.id)}><Trash2 className="h-4 w-4 text-muted-foreground" /></Button>

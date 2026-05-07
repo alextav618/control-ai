@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useEffect } from "react"; 
+import { useState, useEffect } from "react"; // Added useEffect import
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -26,14 +26,13 @@ function ProfilesPage() {
   const { data: profile } = useQuery({
     queryKey: ["profile", user?.id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle();
-      if (error) console.error('Erro Supabase (fetch profile):', error);
+      const { data } = await supabase.from("profiles").select("*").eq("id", user?.id).maybeSingle(); // Fixed type error
       return data;
     },
     enabled: !!user,
   });
 
-  useEffect(() => { 
+  useEffect(() => { // Fixed missing useEffect
     if (profile) {
       setForm({
         display_name: profile.display_name || "",
@@ -49,11 +48,7 @@ function ProfilesPage() {
     if (form.monthly_budget) payload.monthly_budget = Number(form.monthly_budget);
 
     const { error } = await supabase.from("profiles").upsert(payload);
-    if (error) { 
-      console.error('Erro Supabase (upsert profile):', error);
-      toast.error(error.message); 
-      return; 
-    }
+    if (error) { toast.error(error.message); return; }
     toast.success("Perfil salvo");
     setOpen(false);
     setEditing(false);
