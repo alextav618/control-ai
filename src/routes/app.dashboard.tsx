@@ -78,8 +78,11 @@ function Dashboard() {
     }));
   }, [data]);
 
-  const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  // Filtra transações que não são transferências para os cálculos de receita e despesa
+  const nonTransferTxs = useMemo(() => tx.filter(t => t.type !== 'transfer'), [tx]);
+
+  const income = nonTransferTxs.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const expense = nonTransferTxs.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
   
   const cashAccounts = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card");
@@ -134,7 +137,7 @@ function Dashboard() {
   const variableExpense = expense - cardExpense - fixedExpense;
 
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
-  tx.filter((t: any) => t.type === "expense").forEach((t: any) => {
+  nonTransferTxs.filter((t: any) => t.type === "expense").forEach((t: any) => {
     const k = t.category_id ?? "none";
     const name = t.categories?.name ?? "Sem categoria";
     const icon = t.categories?.icon;
@@ -333,7 +336,7 @@ function Dashboard() {
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.description}</div>
-                    <div className="text-[10px] text-muted-foreground">{formatDateBR(t.occurred_on)} · {t.accounts?.name}</div>
+                    <div className="text-xs text-muted-foreground">{formatDateBR(t.occurred_on)} · {t.accounts?.name}</div>
                   </div>
                 </div>
                 <div className={cn("font-mono tabular text-sm font-semibold", t.type === "income" ? "text-income" : "text-expense")}>
@@ -370,7 +373,7 @@ function Dashboard() {
                         vence {new Date(inv.due_date + "T12:00:00").toLocaleDateString("pt-BR")}
                       </div>
                     </div>
-                    <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount || 0))}</div>
+                    <div className="font-mono tabular font-semibold text-expense whitespace-nowrap">{formatBRL(Number(inv.total_amount))}</div>
                   </div>
                 );
               })}
@@ -410,3 +413,82 @@ function Dashboard() {
     </div>
   );
 }
+</dyad-file>
+
+<dyad-write path="src/components/dashboard/SpendingChart.tsx" description="Garantindo que todas as barras do gráfico de gastos por categoria usem o degradê.">
+"use client";
+
+import React from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Cell,
+} from "recharts";
+import { formatBRL } from "@/lib/format";
+
+interface SpendingChartProps {
+  data: { name: string; total: number }[];
+}
+
+const SpendingChart = ({ data }: SpendingChartProps) => {
+  return (
+    <div className="h-[300px] w-full mt-4">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart
+          data={data}
+          margin={{ top: 10, right: 10, left: -15, bottom: 0 }} // Margem ajustada para ser mais fino
+        >
+          {/* Gradiente de Rosa para Roxo */}
+          <defs>
+            <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="oklch(0.68 0.26 0)" /> {/* Rosa */}
+              <stop offset="95%" stopColor="oklch(0.62 0.25 310)" /> {/* Roxo */}
+            </linearGradient>
+          </defs>
+
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+          <XAxis
+            dataKey="name"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
+            dy={10}
+          />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
+            tickFormatter={(value) => `R$ ${value}`}
+          />
+          <Tooltip
+            cursor={{ fill: "var(--surface-2)" }}
+            contentStyle={{
+              backgroundColor: "var(--surface-1)",
+              borderColor: "var(--border)",
+              borderRadius: "12px",
+              fontSize: "12px",
+              color: "var(--foreground)",
+            }}
+            formatter={(value: number) => [formatBRL(value), "Gasto"]}
+            labelStyle={{ fontWeight: "bold", marginBottom: "4px", color: "var(--foreground)" }} // Cor clara para o label também
+          />
+          <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0} barSize={8}> {/* barSize ajustado para 1/4 do tamanho */}
+            {data.map((entry, index) => (
+              <Cell
+                key={`cell-${index}`}
+                fill="url(#colorGradient)" // Aplica o gradiente
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+export default SpendingChart;
