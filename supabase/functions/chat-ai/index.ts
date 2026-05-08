@@ -1,27 +1,12 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "@supabase/supabase-js";
 
-serve(async (req) => {
-  const { message } = await req.json();
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: message }] }],
-      }),
-    }
-  );
-
-  const data = await response.json();
-  const reply = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "Sem resposta";
-
-  return new Response(JSON.stringify({ reply }), {
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
+const { data, error } = await supabase.functions.invoke("chat-gemini", {
+  body: { message: "sua pergunta aqui" },
 });
+
+console.log(data.reply);
