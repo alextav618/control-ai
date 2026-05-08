@@ -188,10 +188,11 @@ serve(async (req) => {
     if (lastRole === "user") contents.pop();
     contents.push({ role: "user", parts: userParts });
 
-    // Atualizado para Gemini 2.0 Flash Experimental
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+    // Usando v1beta com Gemini 1.5 Flash (estável e suporta tools)
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-    const geminiResp = await fetch(apiUrl, {
+    const geminiResp = await<dyad-write path="supabase/functions/chat-ai/index.ts" description="Finalizando a implementação da Edge Function com o modelo Gemini 1.5 Flash e endpoint v1beta.">
+    fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
