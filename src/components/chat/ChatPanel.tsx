@@ -19,8 +19,20 @@ type Msg = {
   created_at: string;
 };
 
+const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua prioridade máxima é a precisão dos dados. Você é analítico, direto e pragmático.
+
+DIRETRIZES:
+1. Data de Referência: Hoje é 08/05/2026. Todos os cálculos e transações devem respeitar esta data e o fuso horário local.
+2. Tratamento de Data: Use sempre o formato YYYY-MM-DD.
+3. Feedback: Gere uma linha de feedback com emojis (🟢, 🟡, 🔴) para cada análise.
+4. Tom de Voz: Profissional.
+
+REGRAS DE NEGÓCIO:
+- Analise gastos contra o orçamento mensal.
+- Identifique padrões de consumo.`;
+
 export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
-  const { user, session } = useAuth();
+  const { user } = useAuth();
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [imageData, setImageData] = useState<{ base64: string; preview: string } | null>(null);
@@ -42,6 +54,18 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .limit(200);
       if (error) throw error;
       return data as Msg[];
+    },
+    enabled: !!user,
+  });
+
+  const { data: contextData } = useQuery({
+    queryKey: ["chat-context", user?.id],
+    queryFn: async () => {
+      const [accR, profR] = await Promise.all([
+        supabase.from("accounts").select("*").eq("archived", false),
+        supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle(),
+      ]);
+      return { accounts: accR.data, profile: profR.data };
     },
     enabled: !!user,
   });
@@ -102,6 +126,25 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       r.readAsDataURL(blob);
     });
 
+  const callGemini = async (contents: any[], modelId: string): Promise<any> => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error(`[Gemini Error] Status: ${response.status}`, errorData);
+      throw { status: response.status, message: errorData.error?.message || "Erro na API do Gemini" };
+    }
+
+    return response.json();
+  };
+
   const send = async () => {
     if (!user) return;
     if (!text.trim() && !imageData && !audioBlob) return;
@@ -123,7 +166,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
           attachmentUrl = signed?.signedUrl ?? null;
           attachmentType = "image";
         }
-        imageBase64 = imageData.base64;
+        imageBase64 = imageData.base64.split(",")[1];
       }
 
       if (audioBlob) {
@@ -153,45 +196,72 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       if (insErr) throw insErr;
 
-      const history = messages.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
-      // Usando a URL absoluta conforme diretrizes
-      const functionUrl = "https://rfwialobgdafttpuqwfx.supabase.co/functions/v1/chat-ai";
-      
-      const response = await fetch(functionUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({ 
-          text: text.trim() || undefined, 
-          imageBase64, 
-          audioBase64, 
-          audioMime, 
-          history,
-          localDate: localDateString()
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error('Erro na Edge Function:', data);
-        toast.error(data.error || "Erro na IA", { duration: 8000 });
-        setSending(false);
-        return;
+      // Preparar contexto para a IA
+      const today = "2026-05-08";
+      let ctxText = `=== CONTEXTO ATUAL ===\nData de hoje: ${today}\n`;
+      if (contextData?.profile?.display_name) ctxText += `Usuário: ${contextData.profile.display_name}\n`;
+      if (contextData?.profile?.monthly_budget) ctxText += `Orçamento: R$ ${contextData.profile.monthly_budget}\n`;
+      if (contextData?.accounts?.length) {
+        ctxText += "\nContas/Cartões:\n";
+        contextData.accounts.forEach((a: any) => {
+          const extra = a.type === "credit_card" ? " (Cartão)" : ` (Saldo: R$ ${a.current_balance})`;
+          ctxText += `- ${a.name}${extra}\n`;
+        });
       }
 
-      const assistantText = data?.message || "Ok.";
+      const contents: any[] = [];
+      
+      // Primeira mensagem com as regras (Prompt Mestre)
+      contents.push({
+        role: "user",
+        parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
+      });
+
+      contents.push({
+        role: "model",
+        parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
+      });
+
+      // Histórico
+      messages.slice(-10).forEach((m) => {
+        contents.push({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }]
+        });
+      });
+
+      // Mensagem atual
+      const currentParts: any[] = [];
+      if (text) currentParts.push({ text });
+      if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
+      if (audioBase64) currentParts.push({ inline_data: { mime_type: audioMime || "audio/webm", data: audioBase64 } });
+      
+      contents.push({ role: "user", parts: currentParts });
+
+      // Chamada com Fallback
+      let result;
+      try {
+        result = await callGemini(contents, "gemini-2.5-flash");
+      } catch (e: any) {
+        if (e.status === 404) {
+          console.warn("Modelo gemini-2.5-flash não encontrado, tentando fallback para gemini-2.0-flash...");
+          result = await callGemini(contents, "gemini-2.0-flash");
+        } else {
+          throw e;
+        }
+      }
+
+      const assistantText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
+      
       const { data: aMsg, error: aInsErr } = await supabase
         .from("chat_messages")
         .insert({
           user_id: user.id,
           role: "assistant",
           content: assistantText,
-          metadata: { actions: data?.actions ?? [] },
+          metadata: { actions: result.metadata?.actions ?? [] },
         })
         .select()
         .single();
@@ -209,7 +279,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       setImageData(null);
       setAudioBlob(null);
     } catch (e: any) {
-      console.error('Erro no envio:', e);
+      console.error('[Chat Error]', e);
       toast.error(e.message || "Erro inesperado no chat");
     } finally {
       setSending(false);
@@ -358,7 +428,6 @@ function ActionCard({ action }: { action: any }) {
   }
   if (action.type === "account") return <Tag>Conta criada: {action.account.name}</Tag>;
   if (action.type === "fixed_bill") return <Tag>Conta fixa: {action.bill.name}</Tag>;
-  if (action.type === "category") return <Tag>Categoria: {action.category.name}</Tag>;
   if (action.type === "error") return <div className="text-xs text-destructive">⚠ {action.message}</div>;
   return null;
 }
