@@ -9,9 +9,10 @@ const corsHeaders = {
 const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua prioridade máxima é a precisão dos dados. Você é analítico, direto e pragmático.
 
 DIRETRIZES:
-1. Tratamento de Data: Use sempre o formato YYYY-MM-DD.
-2. Feedback: Gere uma linha de feedback com emojis (🟢, 🟡, 🔴) para cada análise.
-3. Tom de Voz: Profissional.
+1. Data de Referência: Hoje é 08/05/2026. Todos os cálculos e transações devem respeitar esta data e o fuso horário local.
+2. Tratamento de Data: Use sempre o formato YYYY-MM-DD.
+3. Feedback: Gere uma linha de feedback com emojis (🟢, 🟡, 🔴) para cada análise.
+4. Tom de Voz: Profissional.
 
 REGRAS DE NEGÓCIO:
 - Analise gastos contra o orçamento mensal.
@@ -63,7 +64,8 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const { text, imageBase64, audioBase64, audioMime, history, localDate } = body;
-    const today = localDate || new Date().toISOString().slice(0, 10)
+    // Forçando a data solicitada pelo usuário
+    const today = "2026-05-08";
 
     const [accountsR, profileR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
@@ -72,10 +74,9 @@ serve(async (req) => {
 
     const ctxText = getAccountSummaryText({ accounts: accountsR.data, profile: profileR.data }, today);
     
-    // Construindo o array de mensagens (contents)
     const contents = [];
     
-    // 1. Injetando o Prompt Mestre como a primeira mensagem do usuário
+    // 1. Injetando o Prompt Mestre como a primeira mensagem do usuário (v1beta compatibilidade)
     contents.push({
       role: "user",
       parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
@@ -84,10 +85,10 @@ serve(async (req) => {
     // Resposta simulada do modelo para manter a alternância de roles
     contents.push({
       role: "model",
-      parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA. Como posso ajudar hoje?" }]
+      parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
     });
 
-    // 2. Adicionando o histórico (garantindo alternância)
+    // 2. Adicionando o histórico
     for (const h of (history || [])) {
       const role = h.role === "assistant" ? "model" : "user";
       contents.push({ role, parts: [{ text: h.content }] });
@@ -106,8 +107,8 @@ serve(async (req) => {
 
     contents.push({ role: "user", parts: currentParts });
 
-    // URL v1 estável
-    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Usando v1beta com gemini-1.5-flash como fallback estável
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
