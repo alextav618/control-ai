@@ -149,8 +149,8 @@ serve(async (req) => {
     }
     contents.push({ role: "user", parts: userParts });
 
-    // Alterado para v1 e gemini-1.5-flash-latest para maior compatibilidade
-    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Usando v1beta que suporta system_instruction e tools
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
