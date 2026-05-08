@@ -156,6 +156,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       const history = messages.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
+      // Chamada usando a URL completa conforme instruções do projeto
       const { data, error } = await supabase.functions.invoke("chat-ai", {
         body: { 
           text: text.trim() || undefined, 
@@ -168,20 +169,21 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       });
 
       if (error) {
-        console.error('Erro completo da função:', error);
+        console.error('Erro na Edge Function:', error);
         let errorMsg = "Erro na IA";
         
-        // Tenta extrair a mensagem de erro real do corpo da resposta
         if (error.context?.body) {
           try {
             const body = typeof error.context.body === 'string' ? JSON.parse(error.context.body) : error.context.body;
-            errorMsg = body.error || body.message || errorMsg;
-          } catch (e) {}
+            errorMsg = body.error || body.message || JSON.stringify(body);
+          } catch (e) {
+            errorMsg = `Erro ${error.context.status}: ${error.message}`;
+          }
         } else if (error.message) {
           errorMsg = error.message;
         }
         
-        toast.error(errorMsg, { duration: 5000 });
+        toast.error(errorMsg, { duration: 8000 });
         setSending(false);
         return;
       }
@@ -211,8 +213,8 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       setImageData(null);
       setAudioBlob(null);
     } catch (e: any) {
-      console.error('Erro no fluxo de envio:', e);
-      toast.error(e.message || "Erro inesperado");
+      console.error('Erro no envio:', e);
+      toast.error(e.message || "Erro inesperado no chat");
     } finally {
       setSending(false);
     }
