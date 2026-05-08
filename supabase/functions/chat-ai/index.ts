@@ -10,49 +10,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const SYSTEM_PROMPT = `Você é o **IControl IA**, assistente de alta performance — analítico, direto, visual, levemente crítico. Atua como estrategista de finanças e rotina, não como chat passivo. Português do Brasil. NUNCA use o nome antigo "Ledger".
+const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua prioridade máxima é a precisão dos dados e a persistência no Supabase. Você é analítico, direto e não aceita ineficiências.
 
-## REGRAS DE OPERAÇÃO (OBRIGATÓRIO)
-1. Quando o usuário relatar GASTO, RECEITA, COMPRA, TRANSFERÊNCIA — mesmo em frases curtas — você DEVE chamar \`register_transaction\`. NUNCA responda só "Ok." sem registrar.
-2. Quando pedir para criar conta, cartão, conta fixa ou categoria, use \`register_entity\`.
-3. Quando perguntar "quanto gastei", "total em X", "gastos da semana" etc., você DEVE chamar \`query_spending\` para obter o SUM real — NUNCA invente números.
-4. Para saldo, fatura, últimas transações: use o CONTEXTO já fornecido.
-5. Para perguntas gerais (conhecimento, dúvidas, dicas, explicações), responda livremente como um assistente geral.
+DIRETRIZES DE EXECUÇÃO:
+1. Registro de Dados: Sempre que o usuário informar um gasto, pagamento ou recebimento, priorize o uso da ferramenta register_transaction.
+2. Tratamento de Data (CRÍTICO): Ignore o fuso horário do navegador. Grave as datas sempre no formato YYYY-MM-DD para evitar que lançamentos apareçam no dia anterior.
+3. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
 
-## FORMATO DE RESPOSTA (OBRIGATÓRIO — estilo dashboard)
-- Use **bullet points** e **quebras de linha**. Nunca misture dados diferentes na mesma linha.
-- Use emojis como marcadores funcionais: 🟢 ganho/ok · 🔴 alerta · 🟡 atenção · 💳 cartão · 💰 receita · 📅 data/agenda · 🍔 alimentação · ⚠️ aviso.
-- Use **tabelas Markdown** sempre que houver dados numéricos comparativos ou listas de tarefas.
-- Tom profissional, pragmático, levemente crítico. Se o usuário propuser algo ineficiente, corrija com foco em resultado.
-- Resumido por padrão; aprofunde só se solicitado.
+PADRÃO DE RESPOSTA (REGRA 30):
+- Feedback Imediato: Gere obrigatoriamente uma linha de feedback após cada registro:
+  🟢 Incentivo: Recebimentos ou economia.
+  🟡 Neutro: Contas fixas/obrigatórias.
+  🔴 Alerta: Gastos extras ou fora do teto.
+- Formatação: Use bullet points, tabelas Markdown para números e emojis funcionais.
+- Tom de Voz: Profissional, pragmático e levemente crítico. Se o usuário estiver gastando demais, dê um 'puxão de orelha' estratégico.
 
-## TEMPLATE DE CONFIRMAÇÃO DE LANÇAMENTO
-Após registrar uma transação, responda nesse formato:
-
-🔴/🟡/🟢 [Análise de uma linha sobre o impacto no orçamento]
-
-**Registro de [Saída/Entrada]:**
-- 🍔/💳/💰 [descrição] • **R$ [valor]**
-- 📅 Data: [DD/MM/AAAA]
-- 💳 Origem: [conta/cartão]
-
-(Se houver dado de categoria/orçamento no contexto, adicione uma mini-tabela "Status Financeiro Atual" com Categoria | Limite | Gasto | Disponível.)
-
-## VINCULAÇÃO DE CONTAS/CARTÕES
-- "no Nubank crédito", "no cartão X" → procure account com nome parecido e type='credit_card'. Use o ID em account_id.
-- "débito", "conta", "Pix" + uma única conta corrente → use ela. Várias → escolha a mais provável e cite em audit_reason.
-- Sem match → account_id null + avise em audit_reason.
-
-## AUDITORIA (audit_level)
-- 🟢 green: previsto / dentro do orçamento / receita esperada.
-- 🟡 yellow: atenção (categoria acima da média, valor incomum).
-- 🔴 red: fora do radar / impulso / acima do limite saudável.
-Justifique em audit_reason em 1 frase.
-
-## REGRAS DE NEGÓCIO
-- Cartão de crédito: fatura definida por DATA DE OCORRÊNCIA vs DATA DE CORTE. Backend calcula invoice_id — apenas envie account_id.
-- Parcelamentos ("12x de 200"): preencha installment.total_installments e installment.installment_amount.
-- Datas: hoje é padrão. Formato YYYY-MM-DD.`;
+MEMÓRIA E CONTEXTO:
+- Antes de responder, verifique o estado atual do banco (fornecido no contexto) para não duplicar informações.
+- Se uma transação falhar, exponha o erro técnico (Supabase/HTTP) imediatamente para debug.
+- Resuma por padrão; aprofunde apenas se solicitado. Foco total em resultado prático.`;
 
 function getAccountSummaryText(ctx: any, localDate: string): string {
   if (!ctx) return "";
@@ -203,7 +179,6 @@ Deno.serve(async (req) => {
       localDate?: string;
     };
 
-    // FIX: Use provided localDate or fallback to UTC (but localDate is preferred)
     const today = localDate || new Date().toISOString().slice(0, 10);
 
     // Buscar contexto financeiro
@@ -249,8 +224,6 @@ Deno.serve(async (req) => {
       { role: "user", content: userParts.length ? userParts : (text ?? "") },
     ];
 
-    console.log("[chat-ai] Sending messages to AI gateway:", JSON.stringify(messages, null, 2));
-
     const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -267,10 +240,8 @@ Deno.serve(async (req) => {
 
     if (!aiResp.ok) {
       const errText = await aiResp.text();
-      console.error("[chat-ai] AI gateway error:", aiResp.status, errText);
-      if (aiResp.status === 429) return new Response(JSON.stringify({ error: "Limite de uso atingido. Tente em alguns segundos." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      if (aiResp.status === 402) return new Response(JSON.stringify({ error: "Créditos da IA esgotados. Adicione créditos no workspace." }), { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ error: `Falha ao consultar IA: ${aiResp.status} - ${errText}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      if (aiResp.status === 429) return new Response(JSON.stringify({ error: "Limite de uso atingido." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: `Erro IA: ${aiResp.status} - ${errText}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const ai = await aiResp.json();
@@ -284,7 +255,7 @@ Deno.serve(async (req) => {
     for (const call of toolCalls) {
       const fnName = call.function?.name;
       let args: any = {};
-      try { args = JSON.parse(call.function?.arguments ?? "{}"); } catch (e) { console.error(`[chat-ai] Failed to parse arguments for tool ${fnName}:`, e); }
+      try { args = JSON.parse(call.function?.arguments ?? "{}"); } catch (e) { console.error(`[chat-ai] Args parse error:`, e); }
 
       if (fnName === "register_transaction") {
         const action = await handleTransaction(supabase, userId, args, ctx, today);
@@ -300,7 +271,6 @@ Deno.serve(async (req) => {
     }
 
     let finalText = aiText;
-    // Se houve query_spending, fazemos um segundo round-trip para o modelo redigir resposta natural
     if (toolResults.length > 0) {
       const followupMessages = [
         ...messages,
@@ -316,28 +286,16 @@ Deno.serve(async (req) => {
         headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: followupMessages }),
       });
-      if (!followResp.ok) {
-        const errText = await followResp.text();
-        console.error("[chat-ai] AI gateway follow-up error:", followResp.status, errText);
-        // Não retorna erro aqui, usa a resposta original do assistente
-      } else {
+      if (followResp.ok) {
         const followAi = await followResp.json();
         finalText = followAi.choices?.[0]?.message?.content ?? finalText;
       }
     }
 
-    console.log("[chat-ai] Final response:", { message: finalText, actions, ctx_summary: ctx.month_summary });
-
     return new Response(JSON.stringify({ message: finalText, actions, ctx_summary: ctx.month_summary }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    console.error("[chat-ai] Uncaught error:", e);
-    // Log the error details for debugging
-    if (e instanceof Error) {
-      console.error(`[chat-ai] Error message: ${e.message}`);
-      console.error(`[chat-ai] Error stack: ${e.stack}`);
-    }
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "unknown error" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -350,7 +308,6 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
   const closingDay = account.closing_day ?? 1;
   const dueDay = account.due_day ?? closingDay;
   
-  // FIX: Use local date logic for invoice window
   const occ = new Date(occurredOn + "T12:00:00Z");
   const occDay = occ.getUTCDate();
   let refMonth = occ.getUTCMonth() + 1;
@@ -361,8 +318,7 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
     if (refMonth > 12) { refMonth = 1; refYear += 1; }
   }
   
-  // Closing/due dates da fatura
-  const closingMonthIdx = refMonth - 1; // 0-based
+  const closingMonthIdx = refMonth - 1;
   const closingDate = new Date(Date.UTC(refYear, closingMonthIdx, Math.min(closingDay, 28)));
   
   let dueYear = refYear;
@@ -392,7 +348,7 @@ async function ensureInvoice(supabase: any, userId: string, account: any, occurr
     status: "open",
     total_amount: 0,
   }).select().single();
-  if (error) { console.error("invoice create error", error); return null; }
+  if (error) return null;
   return created;
 }
 
@@ -401,9 +357,8 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
   const account = ctx.accounts.find((a: any) => a.id === args.account_id);
   const isCard = account?.type === "credit_card";
 
-  // Parcelamento → cria plano + N transações (uma por parcela)
-  const totalInst = Number(args.installment?.total_installments ?? 0);
-  if (totalInst > 1) {
+  if (Number(args.installment?.total_installments ?? 0) > 1) {
+    const totalInst = Number(args.installment.total_installments);
     const instAmount = Number(args.installment.installment_amount);
     const total = Number(args.installment.total_amount ?? instAmount * totalInst);
     const { data: plan, error: planErr } = await supabase
@@ -420,22 +375,15 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       })
       .select()
       .single();
-    if (planErr || !plan) {
-      console.error("plan insert error", planErr);
-      return { type: "error", message: planErr?.message ?? "plan_failed" };
-    }
+    if (planErr || !plan) return { type: "error", message: `Erro Plano: ${planErr?.message}` };
 
     const baseDate = new Date(occurred + "T12:00:00Z");
     const rows: any[] = [];
-    let firstInvoice: any = null;
     for (let i = 0; i < totalInst; i++) {
       const d = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth() + i, baseDate.getUTCDate()));
       const occ_i = d.toISOString().slice(0, 10);
       let inv: any = null;
-      if (isCard) {
-        inv = await ensureInvoice(supabase, userId, account, occ_i);
-        if (i === 0) firstInvoice = inv;
-      }
+      if (isCard) inv = await ensureInvoice(supabase, userId, account, occ_i);
       rows.push({
         user_id: userId,
         type: args.type,
@@ -455,16 +403,10 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       });
     }
     const { data: txs, error: txErr } = await supabase.from("transactions").insert(rows).select();
-    if (txErr) {
-      console.error("tx batch insert error", txErr);
-      return { type: "error", message: txErr.message };
-    }
+    if (txErr) return { type: "error", message: `Erro Transação: ${txErr.message}` };
     
-    // Recompute all affected invoices
     const invoiceIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-    for (const invId of invoiceIds) {
-      await recomputeInvoiceTotal(supabase, invId);
-    }
+    for (const invId of invoiceIds) await recomputeInvoiceTotal(supabase, invId);
 
     await supabase.from("audit_log").insert({
       user_id: userId,
@@ -474,10 +416,9 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
       reasoning: args.audit_reason ?? null,
       data: args,
     });
-    return { type: "transaction", transaction: txs?.[0], invoice: firstInvoice };
+    return { type: "transaction", transaction: txs?.[0] };
   }
 
-  // Transação simples
   const invoice = isCard ? await ensureInvoice(supabase, userId, account, occurred) : null;
   const { data: tx, error: txErr } = await supabase
     .from("transactions")
@@ -499,10 +440,7 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     .select()
     .single();
 
-  if (txErr) {
-    console.error("tx insert error", txErr);
-    return { type: "error", message: txErr.message };
-  }
+  if (txErr) return { type: "error", message: `Erro Transação: ${txErr.message}` };
 
   await supabase.from("audit_log").insert({
     user_id: userId,
@@ -513,11 +451,8 @@ async function handleTransaction(supabase: any, userId: string, args: any, ctx: 
     data: args,
   });
 
-  if (invoice?.id) {
-    await recomputeInvoiceTotal(supabase, invoice.id);
-  }
-
-  return { type: "transaction", transaction: tx, invoice };
+  if (invoice?.id) await recomputeInvoiceTotal(supabase, invoice.id);
+  return { type: "transaction", transaction: tx };
 }
 
 async function recomputeInvoiceTotal(supabase: any, invoiceId: string) {
@@ -533,57 +468,18 @@ async function recomputeInvoiceTotal(supabase: any, invoiceId: string) {
 async function handleEntity(supabase: any, userId: string, args: any) {
   const { entity, payload } = args;
   if (entity === "account") {
-    const { data, error } = await supabase
-      .from("accounts")
-      .insert({ user_id: userId, ...payload })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("accounts").insert({ user_id: userId, ...payload }).select().single();
     return error ? { type: "error", message: error.message } : { type: "account", account: data };
   }
   if (entity === "fixed_bill") {
-    const { data, error } = await supabase
-      .from("fixed_bills")
-      .insert({ user_id: userId, ...payload })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("fixed_bills").insert({ user_id: userId, ...payload }).select().single();
     return error ? { type: "error", message: error.message } : { type: "fixed_bill", bill: data };
   }
   if (entity === "category") {
-    const { data, error } = await supabase
-      .from("categories")
-      .insert({ user_id: userId, kind: "expense", ...payload })
-      .select()
-      .single();
+    const { data, error } = await supabase.from("categories").insert({ user_id: userId, kind: "expense", ...payload }).select().single();
     return error ? { type: "error", message: error.message } : { type: "category", category: data };
   }
   return { type: "error", message: "Entidade desconhecida" };
-}
-
-function resolvePeriod(period: string | undefined, today: string): { from?: string; to?: string } {
-  if (!period) return {};
-  const now = new Date(today + "T12:00:00Z");
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const d = now.getUTCDate();
-  const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
-  
-  if (period === "today") {
-    return { from: today, to: today };
-  }
-  if (period === "week") {
-    const start = new Date(Date.UTC(y, m, d - 6));
-    return { from: fmt(start), to: today };
-  }
-  if (period === "month") {
-    return { from: fmt(new Date(Date.UTC(y, m, 1))), to: fmt(new Date(Date.UTC(y, m + 1, 0))) };
-  }
-  if (period === "last_month") {
-    return { from: fmt(new Date(Date.UTC(y, m - 1, 1))), to: fmt(new Date(Date.UTC(y, m, 0))) };
-  }
-  if (period === "year") {
-    return { from: `${y}-01-01`, to: `${y}-12-31` };
-  }
-  return {};
 }
 
 async function handleQuerySpending(supabase: any, _userId: string, args: any, ctx: any, today: string) {
@@ -592,16 +488,14 @@ async function handleQuerySpending(supabase: any, _userId: string, args: any, ct
   const dateTo = pt || args.date_to;
 
   let categoryId: string | null = args.category_id ?? null;
-  let categoryNameMatched: string | null = null;
   if (!categoryId && args.category_name) {
     const needle = String(args.category_name).toLowerCase();
-    const cat = (ctx.categories ?? []).find((c: any) => c.name.toLowerCase().includes(needle) || needle.includes(c.name.toLowerCase()));
-    if (cat) { categoryId = cat.id; categoryNameMatched = cat.name; }
+    const cat = (ctx.categories ?? []).find((c: any) => c.name.toLowerCase().includes(needle));
+    if (cat) categoryId = cat.id;
   }
 
   let q = supabase.from("transactions").select("amount, type, occurred_on, category_id, account_id");
   if (args.type && args.type !== "all") q = q.eq("type", args.type);
-  else if (!args.type) q = q.eq("type", "expense");
   if (categoryId) q = q.eq("category_id", categoryId);
   if (dateFrom) q = q.gte("occurred_on", dateFrom);
   if (dateTo) q = q.lte("occurred_on", dateTo);
@@ -612,36 +506,18 @@ async function handleQuerySpending(supabase: any, _userId: string, args: any, ct
   const rows = data ?? [];
   const total = rows.reduce((s: number, r: any) => s + Number(r.amount), 0);
 
-  let groups: Array<{ key: string; label: string; total: number; count: number }> = [];
-  if (args.group_by === "category") {
-    const map = new Map<string, { label: string; total: number; count: number }>();
-    const catName = (id: string | null) => (ctx.categories ?? []).find((c: any) => c.id === id)?.name ?? "Sem categoria";
-    for (const r of rows) {
-      const key = r.category_id ?? "none";
-      const cur = map.get(key) ?? { label: catName(r.category_id), total: 0, count: 0 };
-      cur.total += Number(r.amount); cur.count += 1;
-      map.set(key, cur);
-    }
-    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
-  } else if (args.group_by === "account") {
-    const map = new Map<string, { label: string; total: number; count: number }>();
-    const accName = (id: string | null) => (ctx.accounts ?? []).find((a: any) => a.id === id)?.name ?? "Sem conta";
-    for (const r of rows) {
-      const key = r.account_id ?? "none";
-      const cur = map.get(key) ?? { label: accName(r.account_id), total: 0, count: 0 };
-      cur.total += Number(r.amount); cur.count += 1;
-      map.set(key, cur);
-    }
-    groups = [...map.entries()].map(([key, v]) => ({ key, ...v })).sort((a, b) => b.total - a.total);
-  }
+  return { total_brl: total, count: rows.length, type: args.type ?? "expense", date_from: dateFrom, date_to: dateTo };
+}
 
-  return {
-    total_brl: total,
-    count: rows.length,
-    type: args.type ?? "expense",
-    category_matched: categoryNameMatched,
-    date_from: dateFrom ?? null,
-    date_to: dateTo ?? null,
-    groups,
-  };
+function resolvePeriod(period: string | undefined, today: string): { from?: string; to?: string } {
+  if (!period) return {};
+  const now = new Date(today + "T12:00:00Z");
+  const y = now.getUTCFullYear(), m = now.getUTCMonth(), d = now.getUTCDate();
+  const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+  if (period === "today") return { from: today, to: today };
+  if (period === "week") return { from: fmt(new Date(Date.UTC(y, m, d - 6))), to: today };
+  if (period === "month") return { from: fmt(new Date(Date.UTC(y, m, 1))), to: fmt(new Date(Date.UTC(y, m + 1, 0))) };
+  if (period === "last_month") return { from: fmt(new Date(Date.UTC(y, m - 1, 1))), to: fmt(new Date(Date.UTC(y, m, 0))) };
+  if (period === "year") return { from: `${y}-01-01`, to: `${y}-12-31` };
+  return {};
 }
