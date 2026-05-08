@@ -40,10 +40,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .select("*")
         .order("created_at", { ascending: true })
         .limit(200);
-      if (error) {
-        console.error('Erro Supabase (fetch chat messages):', error);
-        throw error;
-      }
+      if (error) throw error;
       return data as Msg[];
     },
     enabled: !!user,
@@ -85,7 +82,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       recRef.current = rec;
       setRecording(true);
     } catch (e) {
-      console.error('Erro ao acessar microfone:', e);
       toast.error("Não foi possível acessar o microfone");
     }
   };
@@ -122,9 +118,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         const ext = blob.type.split("/")[1] ?? "jpg";
         const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, blob);
-        if (upErr) {
-          console.error('Erro Supabase (upload image):', upErr);
-        } else {
+        if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
           attachmentUrl = signed?.signedUrl ?? null;
           attachmentType = "image";
@@ -136,9 +130,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         const ext = audioBlob.type.includes("webm") ? "webm" : "mp4";
         const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, audioBlob);
-        if (upErr) {
-          console.error('Erro Supabase (upload audio):', upErr);
-        } else {
+        if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
           attachmentUrl = signed?.signedUrl ?? null;
           attachmentType = "audio";
@@ -159,10 +151,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .select()
         .single();
       
-      if (insErr) {
-        console.error('Erro Supabase (insert user message):', insErr);
-        throw insErr;
-      }
+      if (insErr) throw insErr;
 
       const history = messages.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
@@ -179,11 +168,19 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       });
 
       if (error) {
-        console.error('Erro Edge Function (chat-ai):', error);
-        const errMsg = (error as any)?.context?.body
-          ? (typeof (error as any).context.body === "string" ? (error as any).context.body : JSON.stringify((error as any).context.body))
-          : error.message;
-        toast.error(errMsg || "Erro ao enviar");
+        console.error('Erro Edge Function:', error);
+        let msg = "Erro ao processar resposta";
+        if (error instanceof Error) msg = error.message;
+        else if (typeof error === 'object') {
+          try {
+            const body = (error as any).context?.body;
+            if (body) {
+              const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+              msg = parsed.error || parsed.message || msg;
+            }
+          } catch(e) {}
+        }
+        toast.error(msg);
         throw error;
       }
 
@@ -199,9 +196,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .select()
         .single();
 
-      if (aInsErr) {
-        console.error('Erro Supabase (insert assistant message):', aInsErr);
-      } else {
+      if (!aInsErr) {
         qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, aMsg as Msg]);
       }
       
@@ -209,14 +204,12 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["categories"] });
-      qc.invalidateQueries({ queryKey: ["fixed_bills"] });
 
       setText("");
       setImageData(null);
       setAudioBlob(null);
     } catch (e) {
-      console.error('Erro no fluxo de envio do chat:', e);
+      console.error('Erro no fluxo de envio:', e);
     } finally {
       setSending(false);
     }

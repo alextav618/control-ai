@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-1.5-flash",
         messages,
         tools: TOOLS,
         tool_choice: "auto",
@@ -240,8 +240,8 @@ Deno.serve(async (req) => {
 
     if (!aiResp.ok) {
       const errText = await aiResp.text();
-      if (aiResp.status === 429) return new Response(JSON.stringify({ error: "Limite de uso atingido." }), { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ error: `Erro IA: ${aiResp.status} - ${errText}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      console.error("[chat-ai] AI Gateway Error:", aiResp.status, errText);
+      return new Response(JSON.stringify({ error: `Erro na IA (${aiResp.status}): ${errText}` }), { status: aiResp.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const ai = await aiResp.json();
@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
       const followResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "google/gemini-2.5-flash", messages: followupMessages }),
+        body: JSON.stringify({ model: "google/gemini-1.5-flash", messages: followupMessages }),
       });
       if (followResp.ok) {
         const followAi = await followResp.json();
@@ -296,7 +296,8 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "unknown error" }), {
+    console.error("[chat-ai] Uncaught Error:", e);
+    return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Erro interno desconhecido" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
