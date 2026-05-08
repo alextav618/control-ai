@@ -108,8 +108,8 @@ serve(async (req) => {
 
     contents.push({ role: "user", parts: currentParts });
 
-    // Usando gemini-1.5-flash como fallback estável (v1beta)
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Atualizado para gemini-2.0-flash
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
