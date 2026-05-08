@@ -20,7 +20,7 @@ type Msg = {
 };
 
 export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [imageData, setImageData] = useState<{ base64: string; preview: string } | null>(null);
@@ -156,34 +156,30 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       const history = messages.slice(-10).map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
-      // Chamada usando a URL completa conforme instruções do projeto
-      const { data, error } = await supabase.functions.invoke("chat-ai", {
-        body: { 
+      // Usando a URL absoluta conforme diretrizes
+      const functionUrl = "https://rfwialobgdafttpuqwfx.supabase.co/functions/v1/chat-ai";
+      
+      const response = await fetch(functionUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ 
           text: text.trim() || undefined, 
           imageBase64, 
           audioBase64, 
           audioMime, 
           history,
           localDate: localDateString()
-        },
+        }),
       });
 
-      if (error) {
-        console.error('Erro na Edge Function:', error);
-        let errorMsg = "Erro na IA";
-        
-        if (error.context?.body) {
-          try {
-            const body = typeof error.context.body === 'string' ? JSON.parse(error.context.body) : error.context.body;
-            errorMsg = body.error || body.message || JSON.stringify(body);
-          } catch (e) {
-            errorMsg = `Erro ${error.context.status}: ${error.message}`;
-          }
-        } else if (error.message) {
-          errorMsg = error.message;
-        }
-        
-        toast.error(errorMsg, { duration: 8000 });
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('Erro na Edge Function:', data);
+        toast.error(data.error || "Erro na IA", { duration: 8000 });
         setSending(false);
         return;
       }
