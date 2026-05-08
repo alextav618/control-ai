@@ -64,7 +64,8 @@ serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const { text, imageBase64, audioBase64, audioMime, history, localDate } = body;
-    // Forçando a data solicitada pelo usuário
+    
+    // Data fixa solicitada para segurança de timezone
     const today = "2026-05-08";
 
     const [accountsR, profileR] = await Promise.all([
@@ -82,7 +83,7 @@ serve(async (req) => {
       parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
     });
 
-    // Resposta simulada do modelo para manter a alternância de roles
+    // Resposta simulada do modelo para manter a alternância de roles exigida pela API
     contents.push({
       role: "model",
       parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
@@ -107,7 +108,7 @@ serve(async (req) => {
 
     contents.push({ role: "user", parts: currentParts });
 
-    // Usando v1beta com gemini-1.5-flash como fallback estável
+    // Usando gemini-1.5-flash como fallback estável (v1beta)
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
