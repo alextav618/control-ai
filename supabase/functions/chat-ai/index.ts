@@ -10,7 +10,7 @@ const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua pr
 
 DIRETRIZES DE EXECUÇÃO:
 1. Registro de Dados: Sempre que o usuário informar um gasto, pagamento ou recebimento, priorize o uso da ferramenta register_transaction.
-2. Tratamento de Data (CRÍTICO): Ignore o fuso horário do navegador. Grave as datas sempre no formato YYYY-MM-DD.
+2. Tratamento de Data (CRÍTICO): Grave as datas sempre no formato YYYY-MM-DD.
 3. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
 
 PADRÃO DE RESPOSTA (REGRA 30):
@@ -19,11 +19,10 @@ PADRÃO DE RESPOSTA (REGRA 30):
   🟡 Neutro: Contas fixas/obrigatórias.
   🔴 Alerta: Gastos extras ou fora do teto.
 - Formatação: Use bullet points, tabelas Markdown para números e emojis funcionais.
-- Tom de Voz: Profissional, pragmático e levemente crítico. Se o usuário estiver gastando demais, dê um 'puxão de orelha' estratégico.
+- Tom de Voz: Profissional, pragmático e levemente crítico.
 
 MEMÓRIA E CONTEXTO:
 - Antes de responder, verifique o estado atual do banco para não duplicar informações.
-- Se uma transação falhar, exponha o erro técnico (Supabase/HTTP) imediatamente para debug.
 - Resuma por padrão; aprofunde apenas se solicitado. Foco total em resultado prático.`;
 
 function getAccountSummaryText(ctx: any, localDate: string): string {
@@ -79,38 +78,35 @@ serve(async (req) => {
   }
 
   try {
-    console.log("[chat-ai] Iniciando processamento de mensagem");
+    // Tenta pegar a chave da OpenAI primeiro, depois a da Lovable
+    const openAiKey = Deno.env.get("OPENAI_API_KEY");
+    const lovableKey = Deno.env.get("LOVABLE_API_KEY");
     
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
-      console.error("[chat-ai] LOVABLE_API_KEY não configurada nos Secrets do Supabase");
+    const apiKey = openAiKey || lovableKey;
+    const apiUrl = openAiKey 
+      ? "https://api.openai.com/v1/chat/completions" 
+      : "https://ai.gateway.lovable.dev/v1/chat/completions";
+
+    if (!apiKey) {
       return new Response(
-        JSON.stringify({ error: "LOVABLE_API_KEY não configurada. Configure-a no painel do Supabase (Edge Functions -> Manage Secrets)." }),
+        JSON.stringify({ error: "Nenhuma chave de API configurada (OPENAI_API_KEY ou LOVABLE_API_KEY)." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Não autorizado" }), { status: 401, headers: corsHeaders })
-    }
-
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: authHeader } } }
+      { global: { headers: { Authorization: authHeader! } } }
     )
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser()
-    if (userError || !user) {
-      console.error("[chat-ai] Erro ao obter usuário:", userError);
-      return new Response(JSON.stringify({ error: "Sessão inválida" }), { status: 401, headers: corsHeaders })
-    }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return new Response(JSON.stringify({ error: "Não autorizado" }), { status: 401, headers: corsHeaders })
 
     const { text, history, localDate } = await req.json()
     const today = localDate || new Date().toISOString().slice(0, 10)
 
-    console.log("[chat-ai] Buscando contexto para o usuário:", user.id);
     const [accountsR, categoriesR, profileR, txR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
       supabase.from("categories").select("*"),
@@ -134,11 +130,10 @@ serve(async (req) => {
       { role: "user", content: text }
     ];
 
-    console.log("[chat-ai] Chamando Gateway de IA...");
-    const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const aiResp = await fetch(apiUrl, {
       method: "POST",
       headers: { 
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`, 
+        "Authorization": `Bearer ${apiKey}`, 
         "Content-Type": "application/json" 
       },
       body: JSON.stringify({ 
@@ -151,15 +146,13 @@ serve(async (req) => {
 
     if (!aiResp.ok) {
       const errorBody = await aiResp.text();
-      console.error("[chat-ai] Erro no Gateway de IA:", aiResp.status, errorBody);
-      throw new Error(`Erro na IA (${aiResp.status}): ${errorBody}`);
+      throw new Error(`Erro na API de IA (${aiResp.status}): ${errorBody}`);
     }
 
     const ai = await aiResp.json();
     const toolCalls = ai.choices[0].message.tool_calls || [];
     const actions = [];
 
-    console.log("[chat-ai] Processando tool calls:", toolCalls.length);
     for (const call of toolCalls) {
       const args = JSON.parse(call.function.arguments);
       if (call.function.name === "register_transaction") {
@@ -167,16 +160,13 @@ serve(async (req) => {
         let invoiceId = null;
         
         if (account?.type === "credit_card") {
-          console.log("[chat-ai] Garantindo fatura para cartão:", account.name);
-          const { data: inv, error: invErr } = await supabase.rpc('ensure_invoice', { 
+          const { data: inv } = await supabase.rpc('ensure_invoice', { 
             p_account_id: account.id, 
             p_date: args.occurred_on || today 
           });
-          if (invErr) console.error("[chat-ai] Erro ao garantir fatura:", invErr);
           invoiceId = inv;
         }
 
-        console.log("[chat-ai] Inserindo transação:", args.description);
         const { data: tx, error: txErr } = await supabase.from("transactions").insert({
           user_id: user.id,
           ...args,
@@ -185,14 +175,9 @@ serve(async (req) => {
           source: "chat"
         }).select().single();
 
-        if (txErr) {
-          console.error("[chat-ai] Erro ao inserir transação:", txErr);
-          actions.push({ type: "error", message: `Erro no banco: ${txErr.message}` });
-        } else {
+        if (!txErr) {
           actions.push({ type: "transaction", transaction: tx });
-          if (invoiceId) {
-            await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
-          }
+          if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
           await supabase.from("audit_log").insert({
             user_id: user.id, 
             transaction_id: tx.id, 
@@ -212,10 +197,8 @@ serve(async (req) => {
     });
 
   } catch (e) {
-    console.error("[chat-ai] Erro crítico:", e);
-    return new Response(JSON.stringify({ 
-      error: e instanceof Error ? e.message : "Erro interno desconhecido" 
-    }), { 
+    console.error("[chat-ai] Erro:", e);
+    return new Response(JSON.stringify({ error: e.message }), { 
       status: 500, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
     });
