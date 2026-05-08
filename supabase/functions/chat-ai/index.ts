@@ -77,8 +77,8 @@ serve(async (req) => {
   try {
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!GEMINI_API_KEY) {
-      console.error("[chat-ai] Erro: GEMINI_API_KEY não encontrada nas variáveis de ambiente.");
-      throw new Error("GEMINI_API_KEY não configurada no painel do Supabase.");
+      console.error("[chat-ai] Erro: GEMINI_API_KEY não encontrada.");
+      return new Response(JSON.stringify({ error: "GEMINI_API_KEY não configurada no Supabase." }), { status: 500, headers: corsHeaders });
     }
 
     const authHeader = req.headers.get('Authorization')
@@ -94,8 +94,6 @@ serve(async (req) => {
     const { text, imageBase64, audioBase64, audioMime, history, localDate } = await req.json()
     const today = localDate || new Date().toISOString().slice(0, 10)
 
-    console.log("[chat-ai] Processando mensagem de:", user.email);
-
     // Busca contexto
     const [accountsR, categoriesR, profileR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
@@ -109,44 +107,42 @@ serve(async (req) => {
       profile: profileR.data,
     };
 
-    // Converte histórico
-    const contents = (history || []).map((h: any) => ({
-      role: h.role === "assistant" ? "model" : "user",
-      parts: [{ text: h.content }]
-    }));
+    // Sanitiza histórico para o Gemini (deve alternar user/model e não pode ter dois seguidos do mesmo)
+    const contents = [];
+    let lastRole = "";
+    
+    for (const h of (history || [])) {
+      const role = h.role === "assistant" ? "model" : "user";
+      if (role === lastRole) continue; // Pula se for repetido
+      contents.push({ role, parts: [{ text: h.content }] });
+      lastRole = role;
+    }
 
-    // Prepara partes da mensagem atual (Multimodal)
+    // Prepara partes da mensagem atual
     const userParts = [];
     if (text) userParts.push({ text });
     
     if (imageBase64) {
       const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
-      userParts.push({
-        inline_data: {
-          mime_type: "image/jpeg",
-          data: base64Data
-        }
-      });
+      userParts.push({ inline_data: { mime_type: "image/jpeg", data: base64Data } });
     }
 
     if (audioBase64) {
-      userParts.push({
-        inline_data: {
-          mime_type: audioMime || "audio/webm",
-          data: audioBase64
-        }
-      });
+      userParts.push({ inline_data: { mime_type: audioMime || "audio/webm", data: audioBase64 } });
     }
 
-    if (userParts.length === 0) {
-      throw new Error("Mensagem vazia.");
-    }
+    if (userParts.length === 0) throw new Error("Mensagem vazia.");
 
+    // Se a última mensagem do histórico foi 'user', o Gemini vai reclamar. 
+    // Precisamos garantir que a próxima seja 'user'.
+    if (lastRole === "user") {
+      // Remove a última se for user para substituir pela atual multimodal
+      contents.pop();
+    }
     contents.push({ role: "user", parts: userParts });
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
-    console.log("[chat-ai] Chamando API do Gemini...");
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -162,8 +158,8 @@ serve(async (req) => {
 
     if (!geminiResp.ok) {
       const errText = await geminiResp.text();
-      console.error("[chat-ai] Erro na API do Gemini:", errText);
-      throw new Error(`Erro na API do Gemini: ${errText}`);
+      console.error("[chat-ai] Erro Gemini:", errText);
+      return new Response(JSON.stringify({ error: `Erro na API do Gemini: ${errText}` }), { status: 500, headers: corsHeaders });
     }
 
     const result = await geminiResp.json();
@@ -174,62 +170,37 @@ serve(async (req) => {
     const actions = [];
 
     for (const part of parts) {
-      if (part.text) {
-        assistantMessage += part.text;
-      }
+      if (part.text) assistantMessage += part.text;
       if (part.functionCall) {
         const { name, args } = part.functionCall;
-        console.log("[chat-ai] Executando ferramenta:", name, args);
-        
         if (name === "register_transaction") {
           const account = ctx.accounts.find((a: any) => a.id === args.account_id);
           let invoiceId = null;
-          
           if (account?.type === "credit_card") {
-            const { data: inv } = await supabase.rpc('ensure_invoice', { 
-              p_account_id: account.id, 
-              p_date: args.occurred_on || today 
-            });
+            const { data: inv } = await supabase.rpc('ensure_invoice', { p_account_id: account.id, p_date: args.occurred_on || today });
             invoiceId = inv;
           }
-
           const { data: tx, error: txErr } = await supabase.from("transactions").insert({
-            user_id: user.id,
-            ...args,
-            occurred_on: args.occurred_on || today,
-            invoice_id: invoiceId,
-            source: "chat"
+            user_id: user.id, ...args, occurred_on: args.occurred_on || today, invoice_id: invoiceId, source: "chat"
           }).select().single();
 
-          if (txErr) {
-            console.error("[chat-ai] Erro ao inserir transação:", txErr);
-          } else {
+          if (!txErr) {
             actions.push({ type: "transaction", transaction: tx });
             if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
             await supabase.from("audit_log").insert({
-              user_id: user.id, 
-              transaction_id: tx.id, 
-              action: "created_transaction",
-              level: args.audit_level, 
-              reasoning: args.audit_reason
+              user_id: user.id, transaction_id: tx.id, action: "created_transaction", level: args.audit_level, reasoning: args.audit_reason
             });
           }
         }
       }
     }
 
-    return new Response(JSON.stringify({ 
-      message: assistantMessage || "Processado com sucesso.", 
-      actions 
-    }), {
+    return new Response(JSON.stringify({ message: assistantMessage || "Processado.", actions }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
 
-  } catch (e) {
+  } catch (e: any) {
     console.error("[chat-ai] Erro fatal:", e);
-    return new Response(JSON.stringify({ error: e.message }), { 
-      status: 500, 
-      headers: { ...corsHeaders, "Content-Type": "application/json" } 
-    });
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
   }
 })

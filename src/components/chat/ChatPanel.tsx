@@ -168,20 +168,22 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       });
 
       if (error) {
-        console.error('Erro Edge Function:', error);
-        let msg = "Erro ao processar resposta";
-        if (error instanceof Error) msg = error.message;
-        else if (typeof error === 'object') {
+        console.error('Erro completo da função:', error);
+        let errorMsg = "Erro na IA";
+        
+        // Tenta extrair a mensagem de erro real do corpo da resposta
+        if (error.context?.body) {
           try {
-            const body = (error as any).context?.body;
-            if (body) {
-              const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-              msg = parsed.error || parsed.message || msg;
-            }
-          } catch(e) {}
+            const body = typeof error.context.body === 'string' ? JSON.parse(error.context.body) : error.context.body;
+            errorMsg = body.error || body.message || errorMsg;
+          } catch (e) {}
+        } else if (error.message) {
+          errorMsg = error.message;
         }
-        toast.error(msg);
-        throw error;
+        
+        toast.error(errorMsg, { duration: 5000 });
+        setSending(false);
+        return;
       }
 
       const assistantText = data?.message || "Ok.";
@@ -208,8 +210,9 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       setText("");
       setImageData(null);
       setAudioBlob(null);
-    } catch (e) {
+    } catch (e: any) {
       console.error('Erro no fluxo de envio:', e);
+      toast.error(e.message || "Erro inesperado");
     } finally {
       setSending(false);
     }
