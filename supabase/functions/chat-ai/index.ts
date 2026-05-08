@@ -10,8 +10,9 @@ const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua pr
 
 DIRETRIZES DE EXECUÇÃO:
 1. Registro de Dados: Sempre que o usuário informar um gasto, pagamento ou recebimento, priorize o uso da ferramenta register_transaction.
-2. Tratamento de Data (CRÍTICO): Grave as datas sempre no formato YYYY-MM-DD.
-3. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
+2. Gestão de Estrutura: Se o usuário quiser organizar as finanças, use create_account, create_category ou create_fixed_bill.
+3. Tratamento de Data (CRÍTICO): Grave as datas sempre no formato YYYY-MM-DD.
+4. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
 
 PADRÃO DE RESPOSTA:
 - Feedback Imediato: Gere obrigatoriamente uma linha de feedback após cada registro:
@@ -65,6 +66,50 @@ const GEMINI_TOOLS = [
           required: ["type", "amount", "description", "audit_level", "audit_reason"],
         },
       },
+      {
+        name: "create_account",
+        description: "Cria uma nova conta bancária ou cartão de crédito.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nome da conta (ex: Nubank, Carteira)" },
+            type: { type: "STRING", enum: ["checking", "savings", "cash", "credit_card", "other"], description: "Tipo da conta" },
+            current_balance: { type: "NUMBER", description: "Saldo inicial (apenas para contas não-cartão)" },
+            closing_day: { type: "NUMBER", description: "Dia de fechamento (apenas para cartão)" },
+            due_day: { type: "NUMBER", description: "Dia de vencimento (apenas para cartão)" },
+            credit_limit: { type: "NUMBER", description: "Limite de crédito (apenas para cartão)" },
+          },
+          required: ["name", "type"],
+        },
+      },
+      {
+        name: "create_category",
+        description: "Cria uma nova categoria de gastos ou receitas.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nome da categoria" },
+            kind: { type: "STRING", enum: ["expense", "income"], description: "Tipo da categoria" },
+            icon: { type: "STRING", description: "Emoji para representar a categoria" },
+          },
+          required: ["name", "kind"],
+        },
+      },
+      {
+        name: "create_fixed_bill",
+        description: "Cria uma despesa recorrente (conta fixa).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Nome da conta (ex: Aluguel, Netflix)" },
+            expected_amount: { type: "NUMBER", description: "Valor esperado" },
+            due_day: { type: "NUMBER", description: "Dia do mês em que vence" },
+            category_id: { type: "STRING", description: "ID da categoria" },
+            default_account_id: { type: "STRING", description: "ID da conta padrão para pagamento" },
+          },
+          required: ["name", "expected_amount", "due_day"],
+        },
+      },
     ],
   },
 ];
@@ -100,7 +145,6 @@ serve(async (req) => {
     const { text, imageBase64, audioBase64, audioMime, history, localDate } = body;
     const today = localDate || new Date().toISOString().slice(0, 10)
 
-    // Busca contexto
     const [accountsR, categoriesR, profileR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
       supabase.from("categories").select("*"),
@@ -113,7 +157,6 @@ serve(async (req) => {
       profile: profileR.data,
     };
 
-    // Sanitiza histórico para o Gemini
     const contents = [];
     let lastRole = "";
     
@@ -127,12 +170,10 @@ serve(async (req) => {
 
     const userParts = [];
     if (text) userParts.push({ text });
-    
     if (imageBase64) {
       const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
       userParts.push({ inline_data: { mime_type: "image/jpeg", data: base64Data } });
     }
-
     if (audioBase64) {
       userParts.push({ inline_data: { mime_type: audioMime || "audio/webm", data: audioBase64 } });
     }
@@ -144,12 +185,9 @@ serve(async (req) => {
       });
     }
 
-    if (lastRole === "user") {
-      contents.pop();
-    }
+    if (lastRole === "user") contents.pop();
     contents.push({ role: "user", parts: userParts });
 
-    // Usando v1beta que suporta system_instruction e tools
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
@@ -167,7 +205,6 @@ serve(async (req) => {
 
     if (!geminiResp.ok) {
       const errText = await geminiResp.text();
-      console.error("[chat-ai] Erro Gemini:", errText);
       return new Response(JSON.stringify({ error: `Erro na API do Gemini: ${errText}` }), { 
         status: 500, 
         headers: { ...corsHeaders, "Content-Type": "application/json" } 
@@ -185,6 +222,7 @@ serve(async (req) => {
       if (part.text) assistantMessage += part.text;
       if (part.functionCall) {
         const { name, args } = part.functionCall;
+        
         if (name === "register_transaction") {
           const account = ctx.accounts.find((a: any) => a.id === args.account_id);
           let invoiceId = null;
@@ -203,6 +241,21 @@ serve(async (req) => {
               user_id: user.id, transaction_id: tx.id, action: "created_transaction", level: args.audit_level, reasoning: args.audit_reason
             });
           }
+        } else if (name === "create_account") {
+          const { data: acc, error: accErr } = await supabase.from("accounts").insert({
+            user_id: user.id, ...args
+          }).select().single();
+          if (!accErr) actions.push({ type: "account", account: acc });
+        } else if (name === "create_category") {
+          const { data: cat, error: catErr } = await supabase.from("categories").insert({
+            user_id: user.id, ...args
+          }).select().single();
+          if (!catErr) actions.push({ type: "category", category: cat });
+        } else if (name === "create_fixed_bill") {
+          const { data: bill, error: billErr } = await supabase.from("fixed_bills").insert({
+            user_id: user.id, ...args
+          }).select().single();
+          if (!billErr) actions.push({ type: "fixed_bill", bill: bill });
         }
       }
     }
@@ -212,7 +265,6 @@ serve(async (req) => {
     });
 
   } catch (e: any) {
-    console.error("[chat-ai] Erro fatal:", e);
     return new Response(JSON.stringify({ error: e.message }), { 
       status: 500, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
