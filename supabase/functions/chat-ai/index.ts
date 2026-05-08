@@ -44,7 +44,6 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
   return lines.join("\n");
 }
 
-// Ferramentas no formato Gemini
 const GEMINI_TOOLS = [
   {
     function_declarations: [
@@ -78,7 +77,8 @@ serve(async (req) => {
   try {
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY não configurada.");
+      console.error("[chat-ai] Erro: GEMINI_API_KEY não encontrada nas variáveis de ambiente.");
+      throw new Error("GEMINI_API_KEY não configurada no painel do Supabase.");
     }
 
     const authHeader = req.headers.get('Authorization')
@@ -91,8 +91,10 @@ serve(async (req) => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return new Response(JSON.stringify({ error: "Não autorizado" }), { status: 401, headers: corsHeaders })
 
-    const { text, history, localDate } = await req.json()
+    const { text, imageBase64, audioBase64, audioMime, history, localDate } = await req.json()
     const today = localDate || new Date().toISOString().slice(0, 10)
+
+    console.log("[chat-ai] Processando mensagem de:", user.email);
 
     // Busca contexto
     const [accountsR, categoriesR, profileR] = await Promise.all([
@@ -107,15 +109,44 @@ serve(async (req) => {
       profile: profileR.data,
     };
 
-    // Converte histórico para formato Gemini (user/model)
+    // Converte histórico
     const contents = (history || []).map((h: any) => ({
       role: h.role === "assistant" ? "model" : "user",
       parts: [{ text: h.content }]
     }));
-    contents.push({ role: "user", parts: [{ text }] });
+
+    // Prepara partes da mensagem atual (Multimodal)
+    const userParts = [];
+    if (text) userParts.push({ text });
+    
+    if (imageBase64) {
+      const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+      userParts.push({
+        inline_data: {
+          mime_type: "image/jpeg",
+          data: base64Data
+        }
+      });
+    }
+
+    if (audioBase64) {
+      userParts.push({
+        inline_data: {
+          mime_type: audioMime || "audio/webm",
+          data: audioBase64
+        }
+      });
+    }
+
+    if (userParts.length === 0) {
+      throw new Error("Mensagem vazia.");
+    }
+
+    contents.push({ role: "user", parts: userParts });
 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
+    console.log("[chat-ai] Chamando API do Gemini...");
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -130,8 +161,9 @@ serve(async (req) => {
     });
 
     if (!geminiResp.ok) {
-      const err = await geminiResp.text();
-      throw new Error(`Erro Gemini: ${err}`);
+      const errText = await geminiResp.text();
+      console.error("[chat-ai] Erro na API do Gemini:", errText);
+      throw new Error(`Erro na API do Gemini: ${errText}`);
     }
 
     const result = await geminiResp.json();
@@ -147,6 +179,8 @@ serve(async (req) => {
       }
       if (part.functionCall) {
         const { name, args } = part.functionCall;
+        console.log("[chat-ai] Executando ferramenta:", name, args);
+        
         if (name === "register_transaction") {
           const account = ctx.accounts.find((a: any) => a.id === args.account_id);
           let invoiceId = null;
@@ -167,7 +201,9 @@ serve(async (req) => {
             source: "chat"
           }).select().single();
 
-          if (!txErr) {
+          if (txErr) {
+            console.error("[chat-ai] Erro ao inserir transação:", txErr);
+          } else {
             actions.push({ type: "transaction", transaction: tx });
             if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
             await supabase.from("audit_log").insert({
@@ -183,14 +219,14 @@ serve(async (req) => {
     }
 
     return new Response(JSON.stringify({ 
-      message: assistantMessage || "Processado.", 
+      message: assistantMessage || "Processado com sucesso.", 
       actions 
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
 
   } catch (e) {
-    console.error("[chat-ai] Erro:", e);
+    console.error("[chat-ai] Erro fatal:", e);
     return new Response(JSON.stringify({ error: e.message }), { 
       status: 500, 
       headers: { ...corsHeaders, "Content-Type": "application/json" } 
