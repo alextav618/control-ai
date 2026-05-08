@@ -188,7 +188,8 @@ serve(async (req) => {
     if (lastRole === "user") contents.pop();
     contents.push({ role: "user", parts: userParts });
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Ajustado para v1 estável
+    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
