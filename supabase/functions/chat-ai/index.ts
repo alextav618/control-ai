@@ -77,8 +77,10 @@ serve(async (req) => {
   try {
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!GEMINI_API_KEY) {
-      console.error("[chat-ai] Erro: GEMINI_API_KEY não encontrada.");
-      return new Response(JSON.stringify({ error: "GEMINI_API_KEY não configurada no Supabase." }), { status: 500, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: "GEMINI_API_KEY não configurada no Supabase." }), { 
+        status: 500, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      });
     }
 
     const authHeader = req.headers.get('Authorization')
@@ -89,9 +91,13 @@ serve(async (req) => {
     )
 
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return new Response(JSON.stringify({ error: "Não autorizado" }), { status: 401, headers: corsHeaders })
+    if (!user) return new Response(JSON.stringify({ error: "Não autorizado" }), { 
+      status: 401, 
+      headers: { ...corsHeaders, "Content-Type": "application/json" } 
+    })
 
-    const { text, imageBase64, audioBase64, audioMime, history, localDate } = await req.json()
+    const body = await req.json().catch(() => ({}));
+    const { text, imageBase64, audioBase64, audioMime, history, localDate } = body;
     const today = localDate || new Date().toISOString().slice(0, 10)
 
     // Busca contexto
@@ -107,13 +113,19 @@ serve(async (req) => {
       profile: profileR.data,
     };
 
-    // Sanitiza histórico para o Gemini (deve alternar user/model e não pode ter dois seguidos do mesmo)
+    // Sanitiza histórico para o Gemini
     const contents = [];
     let lastRole = "";
     
     for (const h of (history || [])) {
       const role = h.role === "assistant" ? "model" : "user";
-      if (role === lastRole) continue; // Pula se for repetido
+      
+      // Gemini EXIGE que comece com 'user'
+      if (contents.length === 0 && role !== "user") continue;
+      
+      // Gemini EXIGE alternância estrita
+      if (role === lastRole) continue; 
+      
       contents.push({ role, parts: [{ text: h.content }] });
       lastRole = role;
     }
@@ -131,12 +143,15 @@ serve(async (req) => {
       userParts.push({ inline_data: { mime_type: audioMime || "audio/webm", data: audioBase64 } });
     }
 
-    if (userParts.length === 0) throw new Error("Mensagem vazia.");
+    if (userParts.length === 0) {
+      return new Response(JSON.stringify({ error: "Mensagem vazia." }), { 
+        status: 400, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      });
+    }
 
-    // Se a última mensagem do histórico foi 'user', o Gemini vai reclamar. 
-    // Precisamos garantir que a próxima seja 'user'.
+    // Se a última mensagem do histórico foi 'user', removemos para substituir pela atual multimodal
     if (lastRole === "user") {
-      // Remove a última se for user para substituir pela atual multimodal
       contents.pop();
     }
     contents.push({ role: "user", parts: userParts });
@@ -159,7 +174,10 @@ serve(async (req) => {
     if (!geminiResp.ok) {
       const errText = await geminiResp.text();
       console.error("[chat-ai] Erro Gemini:", errText);
-      return new Response(JSON.stringify({ error: `Erro na API do Gemini: ${errText}` }), { status: 500, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: `Erro na API do Gemini: ${errText}` }), { 
+        status: 500, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      });
     }
 
     const result = await geminiResp.json();
@@ -201,6 +219,9 @@ serve(async (req) => {
 
   } catch (e: any) {
     console.error("[chat-ai] Erro fatal:", e);
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+    return new Response(JSON.stringify({ error: e.message }), { 
+      status: 500, 
+      headers: { ...corsHeaders, "Content-Type": "application/json" } 
+    });
   }
 })
