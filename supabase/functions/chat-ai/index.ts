@@ -13,17 +13,13 @@ DIRETRIZES DE EXECUÇÃO:
 2. Tratamento de Data (CRÍTICO): Grave as datas sempre no formato YYYY-MM-DD.
 3. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
 
-PADRÃO DE RESPOSTA (REGRA 30):
+PADRÃO DE RESPOSTA:
 - Feedback Imediato: Gere obrigatoriamente uma linha de feedback após cada registro:
   🟢 Incentivo: Recebimentos ou economia.
   🟡 Neutro: Contas fixas/obrigatórias.
   🔴 Alerta: Gastos extras ou fora do teto.
-- Formatação: Use bullet points, tabelas Markdown para números e emojis funcionais.
-- Tom de Voz: Profissional, pragmático e levemente crítico.
-
-MEMÓRIA E CONTEXTO:
-- Antes de responder, verifique o estado atual do banco para não duplicar informações.
-- Resuma por padrão; aprofunde apenas se solicitado. Foco total em resultado prático.`;
+- Formatação: Use bullet points e emojis funcionais.
+- Tom de Voz: Profissional e pragmático.`;
 
 function getAccountSummaryText(ctx: any, localDate: string): string {
   if (!ctx) return "";
@@ -48,27 +44,29 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
   return lines.join("\n");
 }
 
-const TOOLS = [
+// Ferramentas no formato Gemini
+const GEMINI_TOOLS = [
   {
-    type: "function",
-    function: {
-      name: "register_transaction",
-      description: "Registra um gasto, receita ou transferência.",
-      parameters: {
-        type: "object",
-        properties: {
-          type: { type: "string", enum: ["expense", "income", "transfer"] },
-          amount: { type: "number" },
-          description: { type: "string" },
-          occurred_on: { type: "string" },
-          account_id: { type: "string" },
-          category_id: { type: "string" },
-          audit_level: { type: "string", enum: ["green", "yellow", "red"] },
-          audit_reason: { type: "string" },
+    function_declarations: [
+      {
+        name: "register_transaction",
+        description: "Registra um gasto, receita ou transferência no banco de dados.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            type: { type: "STRING", enum: ["expense", "income", "transfer"], description: "Tipo da transação" },
+            amount: { type: "NUMBER", description: "Valor numérico" },
+            description: { type: "STRING", description: "O que foi comprado ou recebido" },
+            occurred_on: { type: "STRING", description: "Data no formato YYYY-MM-DD" },
+            account_id: { type: "STRING", description: "ID da conta ou cartão" },
+            category_id: { type: "STRING", description: "ID da categoria" },
+            audit_level: { type: "STRING", enum: ["green", "yellow", "red"], description: "Nível de alerta da auditoria" },
+            audit_reason: { type: "STRING", description: "Justificativa da auditoria" },
+          },
+          required: ["type", "amount", "description", "audit_level", "audit_reason"],
         },
-        required: ["type", "amount", "description", "audit_level", "audit_reason"],
       },
-    },
+    ],
   },
 ];
 
@@ -78,20 +76,9 @@ serve(async (req) => {
   }
 
   try {
-    // Tenta pegar a chave da OpenAI primeiro, depois a da Lovable
-    const openAiKey = Deno.env.get("OPENAI_API_KEY");
-    const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-    
-    const apiKey = openAiKey || lovableKey;
-    const apiUrl = openAiKey 
-      ? "https://api.openai.com/v1/chat/completions" 
-      : "https://ai.gateway.lovable.dev/v1/chat/completions";
-
-    if (!apiKey) {
-      return new Response(
-        JSON.stringify({ error: "Nenhuma chave de API configurada (OPENAI_API_KEY ou LOVABLE_API_KEY)." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY não configurada.");
     }
 
     const authHeader = req.headers.get('Authorization')
@@ -107,90 +94,96 @@ serve(async (req) => {
     const { text, history, localDate } = await req.json()
     const today = localDate || new Date().toISOString().slice(0, 10)
 
-    const [accountsR, categoriesR, profileR, txR] = await Promise.all([
+    // Busca contexto
+    const [accountsR, categoriesR, profileR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
       supabase.from("categories").select("*"),
       supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
-      supabase.from("transactions").select("*").gte("occurred_on", `${today.slice(0, 7)}-01`),
     ]);
-
-    const income = (txR.data ?? []).filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-    const expense = (txR.data ?? []).filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
     const ctx = {
       accounts: accountsR.data ?? [],
       categories: categoriesR.data ?? [],
       profile: profileR.data,
-      month_summary: { income, expense }
     };
 
-    const messages = [
-      { role: "system", content: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx, today)}` },
-      ...(history || []).slice(-6),
-      { role: "user", content: text }
-    ];
+    // Converte histórico para formato Gemini (user/model)
+    const contents = (history || []).map((h: any) => ({
+      role: h.role === "assistant" ? "model" : "user",
+      parts: [{ text: h.content }]
+    }));
+    contents.push({ role: "user", parts: [{ text }] });
 
-    const aiResp = await fetch(apiUrl, {
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+    const geminiResp = await fetch(apiUrl, {
       method: "POST",
-      headers: { 
-        "Authorization": `Bearer ${apiKey}`, 
-        "Content-Type": "application/json" 
-      },
-      body: JSON.stringify({ 
-        model: "gpt-4o-mini", 
-        messages, 
-        tools: TOOLS, 
-        tool_choice: "auto" 
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents,
+        system_instruction: {
+          parts: [{ text: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx, today)}` }]
+        },
+        tools: GEMINI_TOOLS,
+        tool_config: { function_calling_config: { mode: "AUTO" } }
       }),
     });
 
-    if (!aiResp.ok) {
-      const errorBody = await aiResp.text();
-      throw new Error(`Erro na API de IA (${aiResp.status}): ${errorBody}`);
+    if (!geminiResp.ok) {
+      const err = await geminiResp.text();
+      throw new Error(`Erro Gemini: ${err}`);
     }
 
-    const ai = await aiResp.json();
-    const toolCalls = ai.choices[0].message.tool_calls || [];
+    const result = await geminiResp.json();
+    const candidate = result.candidates?.[0];
+    const parts = candidate?.content?.parts || [];
+    
+    let assistantMessage = "";
     const actions = [];
 
-    for (const call of toolCalls) {
-      const args = JSON.parse(call.function.arguments);
-      if (call.function.name === "register_transaction") {
-        const account = ctx.accounts.find((a: any) => a.id === args.account_id);
-        let invoiceId = null;
-        
-        if (account?.type === "credit_card") {
-          const { data: inv } = await supabase.rpc('ensure_invoice', { 
-            p_account_id: account.id, 
-            p_date: args.occurred_on || today 
-          });
-          invoiceId = inv;
-        }
+    for (const part of parts) {
+      if (part.text) {
+        assistantMessage += part.text;
+      }
+      if (part.functionCall) {
+        const { name, args } = part.functionCall;
+        if (name === "register_transaction") {
+          const account = ctx.accounts.find((a: any) => a.id === args.account_id);
+          let invoiceId = null;
+          
+          if (account?.type === "credit_card") {
+            const { data: inv } = await supabase.rpc('ensure_invoice', { 
+              p_account_id: account.id, 
+              p_date: args.occurred_on || today 
+            });
+            invoiceId = inv;
+          }
 
-        const { data: tx, error: txErr } = await supabase.from("transactions").insert({
-          user_id: user.id,
-          ...args,
-          occurred_on: args.occurred_on || today,
-          invoice_id: invoiceId,
-          source: "chat"
-        }).select().single();
+          const { data: tx, error: txErr } = await supabase.from("transactions").insert({
+            user_id: user.id,
+            ...args,
+            occurred_on: args.occurred_on || today,
+            invoice_id: invoiceId,
+            source: "chat"
+          }).select().single();
 
-        if (!txErr) {
-          actions.push({ type: "transaction", transaction: tx });
-          if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
-          await supabase.from("audit_log").insert({
-            user_id: user.id, 
-            transaction_id: tx.id, 
-            action: "created_transaction",
-            level: args.audit_level, 
-            reasoning: args.audit_reason
-          });
+          if (!txErr) {
+            actions.push({ type: "transaction", transaction: tx });
+            if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
+            await supabase.from("audit_log").insert({
+              user_id: user.id, 
+              transaction_id: tx.id, 
+              action: "created_transaction",
+              level: args.audit_level, 
+              reasoning: args.audit_reason
+            });
+          }
         }
       }
     }
 
     return new Response(JSON.stringify({ 
-      message: ai.choices[0].message.content, 
+      message: assistantMessage || "Processado.", 
       actions 
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
