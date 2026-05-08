@@ -119,18 +119,12 @@ serve(async (req) => {
     
     for (const h of (history || [])) {
       const role = h.role === "assistant" ? "model" : "user";
-      
-      // Gemini EXIGE que comece com 'user'
       if (contents.length === 0 && role !== "user") continue;
-      
-      // Gemini EXIGE alternância estrita
       if (role === lastRole) continue; 
-      
       contents.push({ role, parts: [{ text: h.content }] });
       lastRole = role;
     }
 
-    // Prepara partes da mensagem atual
     const userParts = [];
     if (text) userParts.push({ text });
     
@@ -150,13 +144,13 @@ serve(async (req) => {
       });
     }
 
-    // Se a última mensagem do histórico foi 'user', removemos para substituir pela atual multimodal
     if (lastRole === "user") {
       contents.pop();
     }
     contents.push({ role: "user", parts: userParts });
 
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Alterado para v1 e gemini-1.5-flash-latest para maior compatibilidade
+    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
