@@ -1,17 +1,16 @@
-// Edge function: chat com IA financeira multimodal.
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0'
 
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
 
 const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua prioridade máxima é a precisão dos dados e a persistência no Supabase. Você é analítico, direto e não aceita ineficiências.
 
 DIRETRIZES DE EXECUÇÃO:
 1. Registro de Dados: Sempre que o usuário informar um gasto, pagamento ou recebimento, priorize o uso da ferramenta register_transaction.
-2. Tratamento de Data (CRÍTICO): Grave as datas sempre no formato YYYY-MM-DD.
+2. Tratamento de Data (CRÍTICO): Ignore o fuso horário do navegador. Grave as datas sempre no formato YYYY-MM-DD.
 3. Auditoria de Fatura: Para cartões de crédito, verifique se o gasto pertence à fatura atual ou próxima com base na data de fechamento fornecida no contexto.
 
 PADRÃO DE RESPOSTA (REGRA 30):
@@ -20,16 +19,16 @@ PADRÃO DE RESPOSTA (REGRA 30):
   🟡 Neutro: Contas fixas/obrigatórias.
   🔴 Alerta: Gastos extras ou fora do teto.
 - Formatação: Use bullet points, tabelas Markdown para números e emojis funcionais.
-- Tom de Voz: Profissional, pragmático e levemente crítico.
+- Tom de Voz: Profissional, pragmático e levemente crítico. Se o usuário estiver gastando demais, dê um 'puxão de orelha' estratégico.
 
 MEMÓRIA E CONTEXTO:
 - Antes de responder, verifique o estado atual do banco para não duplicar informações.
+- Se uma transação falhar, exponha o erro técnico (Supabase/HTTP) imediatamente para debug.
 - Resuma por padrão; aprofunde apenas se solicitado. Foco total em resultado prático.`;
 
 function getAccountSummaryText(ctx: any, localDate: string): string {
   if (!ctx) return "";
-  const lines: string[] = [];
-  lines.push("=== CONTEXTO DO USUÁRIO ===");
+  const lines: string[] = ["=== CONTEXTO DO USUÁRIO ==="];
   lines.push(`Data de hoje (local): ${localDate}`);
   if (ctx.profile?.display_name) lines.push(`Usuário: ${ctx.profile.display_name}`);
   if (ctx.profile?.monthly_budget) lines.push(`Orçamento mensal: R$ ${ctx.profile.monthly_budget}`);
@@ -46,9 +45,6 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
   if (ctx.categories?.length) {
     lines.push("\nCategorias:");
     for (const c of ctx.categories) lines.push(`- [${c.id}] ${c.name} (${c.kind})`);
-  }
-  if (ctx.month_summary) {
-    lines.push(`\nMês atual: receita R$ ${ctx.month_summary.income} | despesa R$ ${ctx.month_summary.expense}`);
   }
   return lines.join("\n");
 }
@@ -75,37 +71,46 @@ const TOOLS = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "query_spending",
-      description: "Consulta total de gastos/receitas por período.",
-      parameters: {
-        type: { type: "string", enum: ["expense", "income", "all"] },
-        period: { type: "string", enum: ["today", "week", "month", "last_month", "year"] },
-      },
-    },
-  },
 ];
 
-Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders })
+  }
 
   try {
+    console.log("[chat-ai] Iniciando processamento de mensagem");
+    
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not set");
+    if (!LOVABLE_API_KEY) {
+      console.error("[chat-ai] LOVABLE_API_KEY não configurada nos Secrets do Supabase");
+      return new Response(
+        JSON.stringify({ error: "LOVABLE_API_KEY não configurada. Configure-a no painel do Supabase (Edge Functions -> Manage Secrets)." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
-    const authHeader = req.headers.get("Authorization");
-    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_ANON_KEY")!, {
-      global: { headers: { Authorization: authHeader! } }
-    });
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Não autorizado" }), { status: 401, headers: corsHeaders })
+    }
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return new Response("Unauthorized", { status: 401, headers: corsHeaders });
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } }
+    )
 
-    const { text, history, localDate } = await req.json();
-    const today = localDate || new Date().toISOString().slice(0, 10);
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    if (userError || !user) {
+      console.error("[chat-ai] Erro ao obter usuário:", userError);
+      return new Response(JSON.stringify({ error: "Sessão inválida" }), { status: 401, headers: corsHeaders })
+    }
 
+    const { text, history, localDate } = await req.json()
+    const today = localDate || new Date().toISOString().slice(0, 10)
+
+    console.log("[chat-ai] Buscando contexto para o usuário:", user.id);
     const [accountsR, categoriesR, profileR, txR] = await Promise.all([
       supabase.from("accounts").select("*").eq("archived", false),
       supabase.from("categories").select("*"),
@@ -113,8 +118,8 @@ Deno.serve(async (req) => {
       supabase.from("transactions").select("*").gte("occurred_on", `${today.slice(0, 7)}-01`),
     ]);
 
-    const income = (txR.data ?? []).filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-    const expense = (txR.data ?? []).filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+    const income = (txR.data ?? []).filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
+    const expense = (txR.data ?? []).filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
 
     const ctx = {
       accounts: accountsR.data ?? [],
@@ -129,33 +134,50 @@ Deno.serve(async (req) => {
       { role: "user", content: text }
     ];
 
+    console.log("[chat-ai] Chamando Gateway de IA...");
     const aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-4o-mini", messages, tools: TOOLS, tool_choice: "auto" }),
+      headers: { 
+        "Authorization": `Bearer ${LOVABLE_API_KEY}`, 
+        "Content-Type": "application/json" 
+      },
+      body: JSON.stringify({ 
+        model: "gpt-4o-mini", 
+        messages, 
+        tools: TOOLS, 
+        tool_choice: "auto" 
+      }),
     });
 
-    if (!aiResp.ok) throw new Error(`AI Error: ${aiResp.status}`);
+    if (!aiResp.ok) {
+      const errorBody = await aiResp.text();
+      console.error("[chat-ai] Erro no Gateway de IA:", aiResp.status, errorBody);
+      throw new Error(`Erro na IA (${aiResp.status}): ${errorBody}`);
+    }
 
     const ai = await aiResp.json();
     const toolCalls = ai.choices[0].message.tool_calls || [];
     const actions = [];
 
+    console.log("[chat-ai] Processando tool calls:", toolCalls.length);
     for (const call of toolCalls) {
       const args = JSON.parse(call.function.arguments);
       if (call.function.name === "register_transaction") {
-        const account = ctx.accounts.find(a => a.id === args.account_id);
+        const account = ctx.accounts.find((a: any) => a.id === args.account_id);
         let invoiceId = null;
         
         if (account?.type === "credit_card") {
-          const { data: inv } = await supabase.rpc('ensure_invoice', { 
+          console.log("[chat-ai] Garantindo fatura para cartão:", account.name);
+          const { data: inv, error: invErr } = await supabase.rpc('ensure_invoice', { 
             p_account_id: account.id, 
             p_date: args.occurred_on || today 
           });
+          if (invErr) console.error("[chat-ai] Erro ao garantir fatura:", invErr);
           invoiceId = inv;
         }
 
-        const { data: tx, error } = await supabase.from("transactions").insert({
+        console.log("[chat-ai] Inserindo transação:", args.description);
+        const { data: tx, error: txErr } = await supabase.from("transactions").insert({
           user_id: user.id,
           ...args,
           occurred_on: args.occurred_on || today,
@@ -163,22 +185,39 @@ Deno.serve(async (req) => {
           source: "chat"
         }).select().single();
 
-        if (!error) {
+        if (txErr) {
+          console.error("[chat-ai] Erro ao inserir transação:", txErr);
+          actions.push({ type: "error", message: `Erro no banco: ${txErr.message}` });
+        } else {
           actions.push({ type: "transaction", transaction: tx });
-          if (invoiceId) await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
+          if (invoiceId) {
+            await supabase.rpc('recompute_invoice_total', { p_invoice_id: invoiceId });
+          }
           await supabase.from("audit_log").insert({
-            user_id: user.id, transaction_id: tx.id, action: "created_transaction",
-            level: args.audit_level, reasoning: args.audit_reason
+            user_id: user.id, 
+            transaction_id: tx.id, 
+            action: "created_transaction",
+            level: args.audit_level, 
+            reasoning: args.audit_reason
           });
         }
       }
     }
 
-    return new Response(JSON.stringify({ message: ai.choices[0].message.content, actions }), {
+    return new Response(JSON.stringify({ 
+      message: ai.choices[0].message.content, 
+      actions 
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
+
   } catch (e) {
-    console.error("[chat-ai] Error:", e);
-    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+    console.error("[chat-ai] Erro crítico:", e);
+    return new Response(JSON.stringify({ 
+      error: e instanceof Error ? e.message : "Erro interno desconhecido" 
+    }), { 
+      status: 500, 
+      headers: { ...corsHeaders, "Content-Type": "application/json" } 
+    });
   }
-});
+})
