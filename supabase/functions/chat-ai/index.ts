@@ -14,14 +14,9 @@ DIRETRIZES:
 3. Feedback: Gere uma linha de feedback com emojis (🟢, 🟡, 🔴) para cada análise.
 4. Tom de Voz: Profissional.
 
-AÇÕES ESTRUTURADAS:
-Se o usuário quiser registrar algo, responda normalmente e, ao final da sua resposta, inclua OBRIGATORIAMENTE um bloco JSON no formato:
-[ACTION:{"type":"transaction","transaction":{"description":"...","amount":0,"type":"expense|income","occurred_on":"YYYY-MM-DD","audit_level":"green|yellow|red","audit_reason":"..."}}]
-
-REGRAS DE AUDITORIA:
-- 🟢 Green: Gasto essencial ou planejado.
-- 🟡 Yellow: Gasto supérfluo ou acima da média histórica.
-- 🔴 Red: Gasto por impulso ou que estoura o orçamento mensal.`;
+REGRAS DE NEGÓCIO:
+- Analise gastos contra o orçamento mensal.
+- Identifique padrões de consumo.`;
 
 function getAccountSummaryText(ctx: any, localDate: string): string {
   if (!ctx) return "";
@@ -34,7 +29,7 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
     lines.push("\nContas/Cartões:");
     for (const a of ctx.accounts) {
       const extra = a.type === "credit_card" ? " (Cartão)" : ` (Saldo: R$ ${a.current_balance})`;
-      lines.push(`- ${a.name} (ID: ${a.id})${extra}`);
+      lines.push(`- ${a.name}${extra}`);
     }
   }
   return lines.join("\n");
@@ -68,7 +63,9 @@ serve(async (req) => {
     })
 
     const body = await req.json().catch(() => ({}));
-    const { text, imageBase64, audioBase64, audioMime, history } = body;
+    const { text, imageBase64, audioBase64, audioMime, history, localDate } = body;
+    
+    // Data fixa solicitada para segurança de timezone
     const today = "2026-05-08";
 
     const [accountsR, profileR] = await Promise.all([
@@ -79,25 +76,30 @@ serve(async (req) => {
     const ctxText = getAccountSummaryText({ accounts: accountsR.data, profile: profileR.data }, today);
     
     const contents = [];
+    
+    // 1. Injetando o Prompt Mestre como a primeira mensagem do usuário (v1beta compatibilidade)
     contents.push({
       role: "user",
       parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
     });
 
+    // Resposta simulada do modelo para manter a alternância de roles exigida pela API
     contents.push({
       role: "model",
-      parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Processarei registros usando o formato [ACTION:...] quando necessário." }]
+      parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
     });
 
+    // 2. Adicionando o histórico
     for (const h of (history || [])) {
       const role = h.role === "assistant" ? "model" : "user";
       contents.push({ role, parts: [{ text: h.content }] });
     }
 
+    // 3. Adicionando a mensagem atual
     const currentParts = [];
     if (text) currentParts.push({ text });
     if (imageBase64) {
-      const base64Data = image64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+      const base64Data = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
       currentParts.push({ inline_data: { mime_type: "image/jpeg", data: base64Data } });
     }
     if (audioBase64) {
@@ -106,6 +108,7 @@ serve(async (req) => {
 
     contents.push({ role: "user", parts: currentParts });
 
+    // Usando gemini-1.5-flash como fallback estável (v1beta)
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
@@ -114,26 +117,18 @@ serve(async (req) => {
       body: JSON.stringify({ contents }),
     });
 
-    const result = await geminiResp.json();
-    let assistantMessage = result.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
-
-    // Extração de Ações
-    const actions: any[] = [];
-    const actionRegex = /\[ACTION:(.*?)\]/g;
-    let match;
-    while ((match = actionRegex.exec(assistantMessage)) !== null) {
-      try {
-        const actionData = JSON.parse(match[1]);
-        actions.push(actionData);
-      } catch (e) {
-        console.error("[chat-ai] Erro ao parsear ação:", e);
-      }
+    if (!geminiResp.ok) {
+      const errText = await geminiResp.text();
+      return new Response(JSON.stringify({ error: `Erro Gemini: ${errText}` }), { 
+        status: 500, 
+        headers: { ...corsHeaders, "Content-Type": "application/json" } 
+      });
     }
 
-    // Limpa o texto da resposta para não mostrar o JSON bruto ao usuário
-    const cleanMessage = assistantMessage.replace(actionRegex, "").trim();
+    const result = await geminiResp.json();
+    const assistantMessage = result.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
 
-    return new Response(JSON.stringify({ message: cleanMessage, actions }), {
+    return new Response(JSON.stringify({ message: assistantMessage, actions: [] }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" }
     });
 
