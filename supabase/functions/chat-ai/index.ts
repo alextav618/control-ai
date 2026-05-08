@@ -45,9 +45,10 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
   return lines.join("\n");
 }
 
+// Usando snake_case para a API REST
 const GEMINI_TOOLS = [
   {
-    functionDeclarations: [
+    function_declarations: [
       {
         name: "register_transaction",
         description: "Registra um gasto, receita ou transferência no banco de dados.",
@@ -188,20 +189,20 @@ serve(async (req) => {
     if (lastRole === "user") contents.pop();
     contents.push({ role: "user", parts: userParts });
 
-    // Usando v1beta com CamelCase para systemInstruction e toolConfig
-    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // URL corrigida para v1beta com o modelo flash-latest
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents,
-        systemInstruction: {
+        system_instruction: {
           parts: [{ text: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx, today)}` }]
         },
         tools: GEMINI_TOOLS,
-        toolConfig: { 
-          functionCallingConfig: { mode: "AUTO" } 
+        tool_config: { 
+          function_calling_config: { mode: "AUTO" } 
         }
       }),
     });
