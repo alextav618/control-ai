@@ -47,7 +47,7 @@ function getAccountSummaryText(ctx: any, localDate: string): string {
 
 const GEMINI_TOOLS = [
   {
-    function_declarations: [
+    functionDeclarations: [
       {
         name: "register_transaction",
         description: "Registra um gasto, receita ou transferência no banco de dados.",
@@ -188,19 +188,21 @@ serve(async (req) => {
     if (lastRole === "user") contents.pop();
     contents.push({ role: "user", parts: userParts });
 
-    // Ajustado para v1 estável
-    const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+    // Usando v1beta com CamelCase para systemInstruction e toolConfig
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
     const geminiResp = await fetch(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents,
-        system_instruction: {
+        systemInstruction: {
           parts: [{ text: `${SYSTEM_PROMPT}\n\n${getAccountSummaryText(ctx, today)}` }]
         },
         tools: GEMINI_TOOLS,
-        tool_config: { function_calling_config: { mode: "AUTO" } }
+        toolConfig: { 
+          functionCallingConfig: { mode: "AUTO" } 
+        }
       }),
     });
 
