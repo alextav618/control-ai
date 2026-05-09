@@ -94,13 +94,15 @@ function InvoicesPage() {
     if (!user || !payInv || !payAccount) return;
     const totalAmount = Number(payInv.total_amount);
 
+    // Pagamento de fatura é uma TRANSFERÊNCIA da conta corrente para o cartão
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
-      type: "expense",
+      type: "transfer",
       amount: totalAmount,
       description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
       occurred_on: payDate,
-      account_id: payAccount,
+      account_id: payAccount, // Origem
+      to_account_id: payInv.account_id, // Destino (Cartão)
       status: "paid",
       source: "manual",
     });

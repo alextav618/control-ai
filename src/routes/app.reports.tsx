@@ -62,12 +62,12 @@ function ReportsPage() {
       const date = new Date(t.occurred_on + "T12:00:00");
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       if (groups[key]) {
+        // Transferências são ignoradas nos totais de receita e despesa
         if (t.type === "income") groups[key].income += Number(t.amount);
         else if (t.type === "expense") groups[key].expense += Number(t.amount);
       }
     });
 
-    // Cálculo simplificado de evolução de patrimônio (apenas para o mês atual como referência)
     const cash = data.accounts.filter(a => a.type !== 'credit_card').reduce((s, a) => s + Number(a.current_balance), 0);
     const debt = data.invoices.reduce((s, i) => s + Number(i.total_amount), 0);
     let invest = 0;
@@ -85,9 +85,7 @@ function ReportsPage() {
     });
 
     const currentNetWorth = cash + invest - debt;
-    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
     
-    // Simulando histórico de patrimônio baseado no fluxo de caixa (aproximação)
     let runningNetWorth = currentNetWorth;
     const sortedKeys = Object.keys(groups).sort().reverse();
     sortedKeys.forEach((key, idx) => {

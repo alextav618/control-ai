@@ -68,7 +68,6 @@ function Dashboard() {
     enabled: !!user,
   });
 
-  // Vinculação manual de dados para o Dashboard
   const tx = useMemo(() => {
     if (!data) return [];
     return data.transactions.map((t: any) => ({
@@ -78,6 +77,7 @@ function Dashboard() {
     }));
   }, [data]);
 
+  // Transferências são ignoradas nos totais de receita e despesa
   const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
@@ -108,7 +108,6 @@ function Dashboard() {
   }, [data]);
 
   const totalCardDebt = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
-    // Como não temos join aqui, o total_amount da fatura já deve estar atualizado pelo trigger
     return sum + Number(inv.total_amount || 0);
   }, 0);
 
@@ -329,15 +328,18 @@ function Dashboard() {
               <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-surface-2 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-8 w-8 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-                    {t.categories?.icon || "📦"}
+                    {t.type === 'transfer' ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.description}</div>
                     <div className="text-[10px] text-muted-foreground">{formatDateBR(t.occurred_on)} · {t.accounts?.name}</div>
                   </div>
                 </div>
-                <div className={cn("font-mono tabular text-sm font-semibold", t.type === "income" ? "text-income" : "text-expense")}>
-                  {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
+                <div className={cn(
+                  "font-mono tabular text-sm font-semibold", 
+                  t.type === 'transfer' ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
+                )}>
+                  {t.type === 'transfer' ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
                 </div>
               </div>
             ))}

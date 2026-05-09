@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet, Landmark, Coins, Banknote } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet, Landmark, Coins, Banknote, ArrowRightLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,6 @@ const PAYMENT_METHODS = [
   { value: "transferencia", label: "Transferência" },
   { value: "boleto", label: "Boleto" },
   { value: "debito", label: "Débito" },
-  // { value: "credito", label: "Crédito" }, // Removido para evitar redundância com a aba de cartões
   { value: "dinheiro", label: "Dinheiro" },
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
@@ -137,17 +136,19 @@ function TxPage() {
     ...t,
     categories: cats.find((c: any) => c.id === t.category_id),
     accounts: accounts.find((a: any) => a.id === t.account_id),
+    to_account: accounts.find((a: any) => a.id === t.to_account_id),
   })), [rawTx, cats, accounts]);
 
   const filteredTx = useMemo(() => tx.filter((t: any) => {
     const matchesSearch = (t.description || "").toLowerCase().includes(search.toLowerCase());
     const matchesCategory = filterCategory === "all" || t.category_id === filterCategory;
-    const matchesAccount = filterAccount === "all" || t.account_id === filterAccount;
+    const matchesAccount = filterAccount === "all" || t.account_id === filterAccount || t.to_account_id === filterAccount;
     const matchesType = filterType === "all" || t.type === filterType;
     return matchesSearch && matchesCategory && matchesAccount && matchesType;
   }), [tx, search, filterCategory, filterAccount, filterType]);
 
   const summary = useMemo(() => {
+    // Transferências são ignoradas nos totais de receita e despesa
     const income = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
     const expense = filteredTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
     return { income, expense, balance: income - expense };
@@ -180,11 +181,19 @@ function TxPage() {
       const isCard = account?.type === "credit_card";
 
       if (form.type === "transfer") {
-        const rows = [
-          { user_id: user.id, type: "expense" as const, description: `Transferência: ${form.description}`, amount: amountNum, occurred_on: form.occurred_on, account_id: form.account_id, payment_method: "transferencia", status: "paid" as const, source: "manual" },
-          { user_id: user.id, type: "income" as const, description: `Transferência: ${form.description}`, amount: amountNum, occurred_on: form.occurred_on, account_id: form.to_account_id, payment_method: "transferencia", status: "paid" as const, source: "manual" }
-        ];
-        const { error } = await supabase.from('transactions').insert(rows);
+        if (!form.to_account_id) { toast.error("Selecione a conta de destino"); return; }
+        const { error } = await supabase.from('transactions').insert({
+          user_id: user.id,
+          type: "transfer",
+          description: form.description || "Transferência interna",
+          amount: amountNum,
+          occurred_on: form.occurred_on,
+          account_id: form.account_id,
+          to_account_id: form.to_account_id,
+          payment_method: "transferencia",
+          status: "paid",
+          source: "manual"
+        });
         if (error) throw error;
       } else {
         const installments = Math.max(1, Number(form.installments) || 1);
@@ -238,10 +247,9 @@ function TxPage() {
       return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
     }
     if (form.type === "income") {
-      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value)); // Adicionado Dinheiro para Receita
+      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value));
     }
-    // Para despesas, inclui todas as opções, incluindo Dinheiro
-    return PAYMENT_METHODS.filter(m => m.value !== "deposito"); // Remove depósito das despesas
+    return PAYMENT_METHODS.filter(m => m.value !== "deposito");
   }, [form.type]);
 
   return (
@@ -314,7 +322,7 @@ function TxPage() {
                     <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
                       <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                       <SelectContent>
-                        {(activeFormTab === "credit" ? creditCards : cashAccounts).map((a: any) => (
+                        {(activeFormTab === "credit" ? creditCards : accounts).map((a: any) => (
                           <SelectItem key={a.id} value={a.id}>
                             <div className="flex items-center gap-2">
                               <span>{a.icon || (a.type === 'credit_card' ? "💳" : "🏦")}</span>
@@ -326,20 +334,40 @@ function TxPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <Label>Categoria</Label>
-                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                      <SelectContent>
-                        {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
-                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  {form.type !== "transfer" ? (
+                    <div>
+                      <Label>Categoria</Label>
+                      <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                        <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
+                            <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <div>
+                      <Label>Conta de Destino</Label>
+                      <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                        <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                        <SelectContent>
+                          {accounts.filter(a => a.id !== form.account_id).map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>
+                              <div className="flex items-center gap-2">
+                                <span>{a.icon || "🏦"}</span>
+                                <span className="truncate">{a.name}</span>
+                                <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
 
-                {activeFormTab === "common" && (
+                {activeFormTab === "common" && form.type !== "transfer" && (
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label>Forma de Pagamento</Label>
@@ -352,25 +380,6 @@ function TxPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    {form.type === "transfer" && (
-                      <div>
-                        <Label>Conta de Destino</Label>
-                        <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
-                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                          <SelectContent>
-                            {cashAccounts.filter(a => a.id !== form.account_id).map((a: any) => (
-                              <SelectItem key={a.id} value={a.id}>
-                                <div className="flex items-center gap-2">
-                                  <span>{a.icon || "🏦"}</span>
-                                  <span className="truncate">{a.name}</span>
-                                  <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
-                                </div>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -383,15 +392,15 @@ function TxPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Receitas</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Receitas Reais</div>
           <div className="font-mono font-bold text-lg tabular text-income">{formatBRL(summary.income)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Despesas</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Despesas Reais</div>
           <div className="font-mono font-bold text-lg tabular text-expense">{formatBRL(summary.expense)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Saldo</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Fluxo Líquido</div>
           <div className="font-mono font-bold text-lg tabular">{formatBRL(summary.balance)}</div>
         </div>
       </div>
@@ -407,6 +416,7 @@ function TxPage() {
             <SelectItem value="all">Todos</SelectItem>
             <SelectItem value="expense">Despesas</SelectItem>
             <SelectItem value="income">Receitas</SelectItem>
+            <SelectItem value="transfer">Transferências</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -434,11 +444,12 @@ function TxPage() {
 }
 
 function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
+  const isTransfer = t.type === "transfer";
   return (
     <div className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <div className="h-9 w-9 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-          {t.categories?.icon || "📦"}
+          {isTransfer ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -446,9 +457,19 @@ function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
             {t.audit_level && <AuditIndicator level={t.audit_level} reason={t.audit_reason} />}
           </div>
           <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
-            <span>{t.accounts?.name}</span>
-            <span>·</span>
-            <span className="capitalize">{t.payment_method}</span>
+            {isTransfer ? (
+              <>
+                <span className="font-medium text-foreground">{t.accounts?.name}</span>
+                <ArrowRightLeft className="h-3 w-3" />
+                <span className="font-medium text-foreground">{t.to_account?.name}</span>
+              </>
+            ) : (
+              <>
+                <span>{t.accounts?.name}</span>
+                <span>·</span>
+                <span className="capitalize">{t.payment_method}</span>
+              </>
+            )}
             {t.installment_number && (
               <>
                 <span>·</span>
@@ -459,8 +480,11 @@ function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
         </div>
       </div>
       <div className="text-right shrink-0">
-        <div className={cn("font-mono tabular font-semibold", t.type === "income" ? "text-income" : "text-expense")}>
-          {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
+        <div className={cn(
+          "font-mono tabular font-semibold", 
+          isTransfer ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
+        )}>
+          {isTransfer ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
         </div>
         <Button variant="ghost" size="icon" onClick={onDelete} className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
           <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />

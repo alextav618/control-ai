@@ -59,8 +59,9 @@ function InsightsPage() {
   const insights = useMemo<Insight[]>(() => {
     if (!data) return [];
     const out: Insight[] = [];
-    const tx = data.tx as any[];
-    const lastTx = data.lastTx as any[];
+    // Transferências são ignoradas nos insights de receita e despesa
+    const tx = (data.tx as any[]).filter(t => t.type !== 'transfer');
+    const lastTx = (data.lastTx as any[]).filter(t => t.type !== 'transfer');
 
     const expense = tx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
     const income = tx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
@@ -190,7 +191,7 @@ function InsightsPage() {
     setAiLoading(true);
     setAiText(null);
     try {
-      const tx = data.tx as any[];
+      const tx = (data.tx as any[]).filter(t => t.type !== 'transfer');
       const expense = tx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
       const income = tx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
       const itemsTotal = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);

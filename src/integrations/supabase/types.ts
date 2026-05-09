@@ -534,7 +534,7 @@ export type Database = {
           user_id: string
         }
         Update: {
-          account_id?: string
+          account_id?: string | null
           closing_date?: string
           created_at?: string
           due_date?: string
@@ -638,6 +638,7 @@ export type Database = {
       transactions: {
         Row: {
           account_id: string | null
+          to_account_id: string | null
           ai_raw: Json | null
           amount: number
           attachment_url: string | null
@@ -661,6 +662,7 @@ export type Database = {
         }
         Insert: {
           account_id?: string | null
+          to_account_id?: string | null
           ai_raw?: Json | null
           amount: number
           attachment_url?: string | null
@@ -684,6 +686,7 @@ export type Database = {
         }
         Update: {
           account_id?: string | null
+          to_account_id?: string | null
           ai_raw?: Json | null
           amount?: number
           attachment_url?: string | null
@@ -709,6 +712,13 @@ export type Database = {
           {
             foreignKeyName: "transactions_account_id_fkey"
             columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_to_account_id_fkey"
+            columns: ["to_account_id"]
             isOneToOne: false
             referencedRelation: "accounts"
             referencedColumns: ["id"]
