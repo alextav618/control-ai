@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR } from "@/lib/format";
-import { ShieldCheck, AlertTriangle, AlertCircle, Info, Search, Filter } from "lucide-react";
+import { ShieldCheck, AlertTriangle, AlertCircle, Info, Search, Filter, ArrowRightLeft } from "lucide-react";
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -29,12 +29,23 @@ function AuditPage() {
             description,
             amount,
             occurred_on,
-            type
+            type,
+            account_id,
+            to_account_id
           )
         `)
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
+    },
+    enabled: !!user,
+  });
+
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts-simple", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("accounts").select("id, name");
+      return data ?? [];
     },
     enabled: !!user,
   });
@@ -102,7 +113,7 @@ function AuditPage() {
       ) : (
         <div className="space-y-4">
           {filteredLogs.map((log: any) => (
-            <AuditCard key={log.id} log={log} />
+            <AuditCard key={log.id} log={log} accounts={accounts} />
           ))}
         </div>
       )}
@@ -110,7 +121,7 @@ function AuditPage() {
   );
 }
 
-function AuditCard({ log }: { log: any }) {
+function AuditCard({ log, accounts }: { log: any; accounts: any[] }) {
   const levelMeta = {
     green: { icon: ShieldCheck, color: "text-audit-green", bg: "bg-audit-green/10", border: "border-audit-green/20", label: "Saudável" },
     yellow: { icon: AlertTriangle, color: "text-audit-yellow", bg: "bg-audit-yellow/10", border: "border-audit-yellow/20", label: "Atenção" },
@@ -118,6 +129,9 @@ function AuditCard({ log }: { log: any }) {
   }[log.level as "green" | "yellow" | "red"] || { icon: Info, color: "text-muted-foreground", bg: "bg-muted/10", border: "border-border", label: "Info" };
 
   const Icon = levelMeta.icon;
+  const isTransfer = log.transactions?.type === "transfer";
+  const fromAcc = accounts.find(a => a.id === log.transactions?.account_id)?.name;
+  const toAcc = accounts.find(a => a.id === log.transactions?.to_account_id)?.name;
 
   return (
     <div className={cn("rounded-2xl border p-4 md:p-5 shadow-card transition-all hover:shadow-elegant", levelMeta.bg, levelMeta.border)}>
@@ -147,11 +161,25 @@ function AuditCard({ log }: { log: any }) {
       {log.transactions && (
         <div className="mt-4 pt-4 border-t border-border/50 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="h-6 w-6 rounded bg-surface-2 flex items-center justify-center text-[10px] shrink-0">TX</div>
-            <span className="text-xs font-medium truncate">{log.transactions.description}</span>
+            <div className="h-6 w-6 rounded bg-surface-2 flex items-center justify-center text-[10px] shrink-0">
+              {isTransfer ? <ArrowRightLeft className="h-3 w-3" /> : "TX"}
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs font-medium truncate block">{log.transactions.description}</span>
+              {isTransfer && (
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <span>{fromAcc || "Origem"}</span>
+                  <ArrowRightLeft className="h-2 w-2" />
+                  <span>{toAcc || "Destino"}</span>
+                </div>
+              )}
+            </div>
           </div>
-          <div className={cn("font-mono text-xs font-bold tabular", log.transactions.type === "income" ? "text-income" : "text-expense")}>
-            {log.transactions.type === "income" ? "+" : "-"}{formatBRL(log.transactions.amount)}
+          <div className={cn(
+            "font-mono text-xs font-bold tabular", 
+            isTransfer ? "text-muted-foreground" : (log.transactions.type === "income" ? "text-income" : "text-expense")
+          )}>
+            {isTransfer ? "" : (log.transactions.type === "income" ? "+" : "-")}{formatBRL(log.transactions.amount)}
           </div>
         </div>
       )}

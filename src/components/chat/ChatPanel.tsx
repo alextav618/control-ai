@@ -29,7 +29,10 @@ DIRETRIZES:
 
 REGRAS DE NEGÓCIO:
 - Analise gastos contra o orçamento mensal.
-- Identifique padrões de consumo.`;
+- Identifique padrões de consumo.
+- TRANSFERÊNCIAS: Movimentações entre contas do usuário (ex: Pix para si mesmo, pagamento de fatura) são do tipo 'transfer'.
+- Uma 'transfer' deve ter 'account_id' (origem) e 'to_account_id' (destino).
+- Transferências NÃO são receita nem despesa e não afetam o fluxo de caixa real, apenas o saldo das contas envolvidas.`;
 
 export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
   const { user } = useAuth();
