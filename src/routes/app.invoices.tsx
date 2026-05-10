@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -30,6 +31,8 @@ const STATUS_COLOR: Record<string, string> = {
   closed: "text-primary border-primary/30 bg-primary/10",
   paid: "text-income border-income/30 bg-income/10",
 };
+
+const TODAY_REF = "2026-05-10";
 
 function InvoicesPage() {
   const { user } = useAuth();
@@ -62,8 +65,7 @@ function InvoicesPage() {
         .select("*, accounts!inner(name, type, archived, current_balance)")
         .eq("accounts.archived", false)
         .gt("total_amount", 0)
-        .order("reference_year", { ascending: true })
-        .order("reference_month", { ascending: true });
+        .order("due_date", { ascending: true });
       if (error) throw error;
       return data;
     },
@@ -94,6 +96,30 @@ function InvoicesPage() {
   });
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
+
+  // Filtragem e Ordenação Inteligente via useMemo (Transição Instantânea)
+  const { unpaidInvoices, nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
+    const unpaid = invoices.filter((i: any) => i.status !== "paid");
+    const paid = invoices
+      .filter((i: any) => i.status === "paid")
+      .sort((a, b) => {
+        // Ordem decrescente por ano e mês de referência
+        if (a.reference_year !== b.reference_year) return b.reference_year - a.reference_year;
+        return b.reference_month - a.reference_month;
+      });
+
+    // Identifica a próxima fatura a vencer (mais próxima de 10/05/2026)
+    let next: any = null;
+    let rest: any[] = [];
+
+    if (unpaid.length > 0) {
+      // Já estão ordenadas por due_date ASC no queryFn
+      next = unpaid[0];
+      rest = unpaid.slice(1);
+    }
+
+    return { unpaidInvoices: unpaid, nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
+  }, [invoices]);
 
   // Ações
   const triggerRecompute = async (invoiceId: string) => {
@@ -243,11 +269,8 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
-  const unpaidInvoices = invoices.filter((i: any) => i.status !== "paid");
-  const paidInvoices = invoices.filter((i: any) => i.status === "paid").reverse();
-
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300 space-y-10">
+    <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300 space-y-8">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
@@ -258,89 +281,115 @@ function InvoicesPage() {
         </Button>
       </div>
 
-      {/* SEÇÃO: EM ABERTO */}
-      <section>
-        <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto / Fechadas ({unpaidInvoices.length})
-        </h2>
-        {invLoading ? (
-          <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : unpaidInvoices.length === 0 ? (
-          <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">Nenhuma fatura pendente 🎉</div>
-        ) : (
-          <div className="space-y-4">
-            {unpaidInvoices.map((inv: any, index: number) => (
-              <InvCard
-                key={inv.id}
-                inv={inv}
-                isNext={index === 0}
-                onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
-                onAddItem={() => { setTargetInvoiceForItem(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
-              />
-            ))}
-          </div>
-        )}
-      </section>
+      <Tabs defaultValue="pending" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 max-w-md mb-8">
+          <TabsTrigger value="pending" className="flex items-center gap-2">
+            <Clock className="h-4 w-4" /> Pendentes
+          </TabsTrigger>
+          <TabsTrigger value="archive" className="flex items-center gap-2">
+            <Archive className="h-4 w-4" /> Pagas (Arquivo)
+          </TabsTrigger>
+        </TabsList>
 
-      {/* SEÇÃO: AJUSTES */}
-      <section>
-        <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-          <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
-        </h2>
-        <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
-          {adjLoading ? (
-            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-          ) : initialBalances.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">Nenhum ajuste manual lançado.</div>
+        <TabsContent value="pending" className="space-y-10 animate-in fade-in duration-200">
+          {/* PRÓXIMA FATURA (DESTAQUE) */}
+          <section>
+            <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-primary" /> Próxima Fatura a Vencer
+            </h2>
+            {invLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : !nextInvoice ? (
+              <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nenhuma fatura pendente 🎉</div>
+            ) : (
+              <InvCard
+                inv={nextInvoice}
+                isNext={true}
+                onPay={() => { setPayInv(nextInvoice); setPayAccount(cashAccounts[0]?.id ?? ""); }}
+                onAddItem={() => { setTargetInvoiceForItem(nextInvoice); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+              />
+            )}
+          </section>
+
+          {/* DEMAIS FATURAS FUTURAS */}
+          {restOfUnpaid.length > 0 && (
+            <section>
+              <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest">Outras Faturas Pendentes</h2>
+              <div className="space-y-4">
+                {restOfUnpaid.map((inv: any) => (
+                  <InvCard
+                    key={inv.id}
+                    inv={inv}
+                    onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
+                    onAddItem={() => { setTargetInvoiceForItem(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* AJUSTES DE SALDO (Disponíveis em Pendentes) */}
+          <section className="pt-6 border-t border-border/50">
+            <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+              <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
+            </h2>
+            <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
+              {adjLoading ? (
+                <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+              ) : initialBalances.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">Nenhum ajuste manual lançado.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-surface-2/50 border-b border-border">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Cartão / Mês</th>
+                        <th className="px-4 py-3 font-semibold">Valor</th>
+                        <th className="px-4 py-3 font-semibold text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {initialBalances.map((adj: any) => (
+                        <tr key={adj.id} className="hover:bg-surface-2/30 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="font-medium">{adj.invoices?.accounts?.name || "Fatura removida"}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {adj.invoices ? `${monthNames[adj.invoices.reference_month - 1]}/${adj.invoices.reference_year}` : adj.month_year}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
+                          <td className="px-4 py-3 text-right flex justify-end gap-1">
+                            <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </section>
+        </TabsContent>
+
+        <TabsContent value="archive" className="space-y-4 animate-in fade-in duration-200">
+          <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest">Arquivo de Faturas Pagas</h2>
+          {paidInvoices.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nenhuma fatura paga encontrada.</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className="bg-surface-2/50 border-b border-border">
-                  <tr>
-                    <th className="px-4 py-3 font-semibold">Cartão / Mês</th>
-                    <th className="px-4 py-3 font-semibold">Valor</th>
-                    <th className="px-4 py-3 font-semibold text-right">Ações</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {initialBalances.map((adj: any) => (
-                    <tr key={adj.id} className="hover:bg-surface-2/30 transition-colors">
-                      <td className="px-4 py-3">
-                        <div className="font-medium">{adj.invoices?.accounts?.name || "Fatura removida"}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {adj.invoices ? `${monthNames[adj.invoices.reference_month - 1]}/${adj.invoices.reference_year}` : adj.month_year}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
-                      <td className="px-4 py-3 text-right flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                        <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-4">
+              {paidInvoices.map((inv: any) => (
+                <InvCard
+                  key={inv.id}
+                  inv={inv}
+                  onDeletePayment={() => deletePayment(inv)}
+                  onEditPayment={() => openEditPayment(inv)}
+                />
+              ))}
             </div>
           )}
-        </div>
-      </section>
-
-      {/* SEÇÃO: PAGAS */}
-      {paidInvoices.length > 0 && (
-        <section>
-          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas ({paidInvoices.length})</h2>
-          <div className="space-y-4">
-            {paidInvoices.map((inv: any) => (
-              <InvCard
-                key={inv.id}
-                inv={inv}
-                onDeletePayment={() => deletePayment(inv)}
-                onEditPayment={() => openEditPayment(inv)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
+        </TabsContent>
+      </Tabs>
 
       {/* MODAL: PAGAR */}
       <Dialog open={!!payInv} onOpenChange={(v) => !v && setPayInv(null)}>
@@ -466,6 +515,10 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
   });
 
   const isPaid = inv.status === "paid";
+  const due = new Date(inv.due_date + "T12:00:00");
+  const refDate = new Date(TODAY_REF + "T12:00:00");
+  const daysDiff = Math.ceil((due.getTime() - refDate.getTime()) / (1000 * 60 * 60 * 24));
+  const isOverdue = daysDiff < 0;
 
   return (
     <div className={cn(
@@ -473,8 +526,11 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
       isNext ? "border-primary/40 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]" : "border-border"
     )}>
       {isNext && (
-        <div className="bg-primary/10 border-b border-primary/20 px-4 py-1.5 flex items-center gap-2">
-          <span className="text-[11px] font-semibold text-primary uppercase tracking-wider">⚡ Próxima a pagar</span>
+        <div className="bg-primary/10 border-b border-primary/20 px-4 py-1.5 flex items-center justify-between">
+          <span className="text-[11px] font-semibold text-primary uppercase tracking-widest flex items-center gap-2">
+            <Clock className="h-3 w-3" /> Próximo Vencimento
+          </span>
+          {isOverdue && <span className="text-[10px] px-2 py-0.5 rounded-full bg-audit-red/20 text-audit-red font-bold">VENCIDA</span>}
         </div>
       )}
 
@@ -511,7 +567,7 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
         <div className="border-t border-border bg-surface-2/30 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Detalhamento</h3>
-            {onAddItem && <Button size="sm" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
+            {onAddItem && !isPaid && <Button size="sm" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
           </div>
           <div className="space-y-1">
             {details?.adjustment && (
