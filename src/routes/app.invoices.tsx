@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock, RotateCcw, ArrowRight } from "lucide-react";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock, RotateCcw, ArrowRight, ShieldAlert, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -38,7 +38,6 @@ function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
 
-  // Estados de Modais
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
@@ -46,19 +45,17 @@ function InvoicesPage() {
   const [revertInv, setRevertInv] = useState<any>(null);
   const [payTxToRevert, setPayTxToRevert] = useState<any>(null);
   const [isReverting, setIsReverting] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
-  // Estados para Itens Extras
   const [itemDialog, setItemDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [targetInvoiceForItem, setTargetInvoiceForItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
-  // Estados para Ajustes (Saldos Iniciais)
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
   const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
 
-  // Queries
   const { data: invoices = [], isLoading: invLoading } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
@@ -97,42 +94,6 @@ function InvoicesPage() {
     enabled: !!user,
   });
 
-  // Limpeza de Dados Órfãos (Iniciado ao montar a página)
-  useEffect(() => {
-    const cleanupOrphans = async () => {
-      if (!user) return;
-      // Busca transações de pagamento de fatura onde a fatura não está paga
-      const { data: orphans } = await supabase
-        .from("transactions")
-        .select("id, amount, account_id, to_account_id, accounts!transactions_account_id_fkey(name)")
-        .eq("type", "transfer")
-        .ilike("description", "Pagamento fatura%")
-        .not("to_account_id", "is", null);
-
-      if (orphans && orphans.length > 0) {
-        for (const orphan of orphans) {
-          // Verifica se a fatura de destino está realmente paga
-          const { data: inv } = await supabase
-            .from("invoices")
-            .select("id")
-            .eq("account_id", orphan.to_account_id)
-            .eq("status", "paid")
-            .eq("total_amount", orphan.amount)
-            .maybeSingle();
-
-          if (!inv) {
-            console.warn(`[Cleanup] Removendo lançamento órfão ID: ${orphan.id} de R$ ${orphan.amount}`);
-            await supabase.from("transactions").delete().eq("id", orphan.id);
-            console.info(`Reversão automática (Cleanup): +${formatBRL(orphan.amount)} para a conta ${orphan.accounts?.name}`);
-          }
-        }
-        qc.invalidateQueries({ queryKey: ["accounts"] });
-        qc.invalidateQueries({ queryKey: ["transactions"] });
-      }
-    };
-    cleanupOrphans();
-  }, [user]);
-
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
   const { nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
@@ -154,11 +115,123 @@ function InvoicesPage() {
     return { nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
   }, [invoices]);
 
-  const triggerRecompute = async (invoiceId: string) => {
-    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
+  /**
+   * SCRIPT DE SINCRONIA: Repara saldos bancários removendo pagamentos órfãos.
+   */
+  const handleSyncBalances = async () => {
+    setIsSyncing(true);
+    toast.loading("Iniciando reparo de saldos...", { id: "repair" });
+    try {
+      // 1. Busca transações de pagamento que não têm fatura correspondente paga
+      const { data: transactions } = await supabase
+        .from("transactions")
+        .select("id, amount, account_id, to_account_id, description, accounts!transactions_account_id_fkey(name)")
+        .eq("type", "transfer")
+        .ilike("description", "Pagamento fatura%")
+        .not("to_account_id", "is", null);
+
+      if (!transactions || transactions.length === 0) {
+        toast.success("Nenhum lançamento órfão detectado.", { id: "repair" });
+        return;
+      }
+
+      let fixedCount = 0;
+      for (const tx of transactions) {
+        const { data: inv } = await supabase
+          .from("invoices")
+          .select("id")
+          .eq("account_id", tx.to_account_id)
+          .eq("status", "paid")
+          .eq("total_amount", tx.amount)
+          .maybeSingle();
+
+        if (!inv) {
+          // ESTORNO EXPLÍCITO: Devolve o dinheiro para a conta de origem
+          const { data: acc } = await supabase.from("accounts").select("current_balance").eq("id", tx.account_id).single();
+          if (acc) {
+            const newBal = Number(acc.current_balance) + Number(tx.amount);
+            await supabase.from("accounts").update({ current_balance: newBal }).eq("id", tx.account_id);
+            await supabase.from("transactions").delete().eq("id", tx.id);
+            console.info(`[REPARO] Reversão órfã: +${formatBRL(tx.amount)} para ${tx.accounts?.name}`);
+            fixedCount++;
+          }
+        }
+      }
+
+      toast.success(`Reparo concluído. ${fixedCount} contas ajustadas.`, { id: "repair" });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+    } catch (e: any) {
+      toast.error(`Falha no reparo: ${e.message}`, { id: "repair" });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleOpenRevert = async (inv: any) => {
+    setRevertInv(inv);
+    const { data: payTx } = await supabase
+      .from("transactions")
+      .select("*, accounts!transactions_account_id_fkey(name)")
+      .eq("to_account_id", inv.account_id)
+      .eq("type", "transfer")
+      .eq("amount", inv.total_amount)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    setPayTxToRevert(payTx);
+  };
+
+  /**
+   * REVERSÃO EXPLÍCITA: Deleta transação e incrementa saldo manualmente.
+   */
+  const confirmRevert = async () => {
+    if (!revertInv) return;
+    setIsReverting(true);
+    try {
+      const targetAccountId = payTxToRevert?.account_id;
+      const amount = Number(revertInv.total_amount);
+
+      // 1. EXCLUSÃO DA TRANSAÇÃO
+      if (payTxToRevert?.id) {
+        await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
+      } else {
+        // Backup: Exclui por padrão de descrição se o ID falhar
+        await supabase.from("transactions")
+          .delete()
+          .eq("type", "transfer")
+          .eq("to_account_id", revertInv.account_id)
+          .ilike("description", `%${revertInv.accounts?.name}%`)
+          .eq("amount", amount);
+      }
+      
+      // 2. ESTORNO EXPLÍCITO DE SALDO (Garante a integridade se o trigger falhar)
+      if (targetAccountId) {
+        const { data: acc } = await supabase.from("accounts").select("current_balance").eq("id", targetAccountId).single();
+        if (acc) {
+          const newBalance = Number(acc.current_balance) + amount;
+          await supabase.from("accounts").update({ current_balance: newBalance }).eq("id", targetAccountId);
+          console.log(`Reversão concluída: +${formatBRL(amount)} para a conta ${payTxToRevert?.accounts?.name || 'Banco'}`);
+        }
+      }
+      
+      // 3. ATUALIZA STATUS DA FATURA
+      const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
+      if (upErr) throw upErr;
+      
+      toast.success("Fatura revertida e saldo estornado!");
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    } catch (e: any) {
+      toast.error(`Erro crítico na reversão: ${e.message}`);
+    } finally {
+      setIsReverting(false);
+      setRevertInv(null);
+      setPayTxToRevert(null);
+    }
   };
 
   const confirmPay = async () => {
@@ -184,135 +257,45 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
-  const handleOpenRevert = async (inv: any) => {
-    setRevertInv(inv);
-    // Tenta localizar a transação de pagamento exata vinculada a esta fatura
-    const { data: payTx } = await supabase
-      .from("transactions")
-      .select("*, accounts!transactions_account_id_fkey(name)")
-      .eq("to_account_id", inv.account_id)
-      .eq("type", "transfer")
-      .eq("amount", inv.total_amount)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    
-    setPayTxToRevert(payTx);
+  const triggerRecompute = async (invoiceId: string) => {
+    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["dashboard"] });
+    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
   };
 
-  const confirmRevert = async () => {
-    if (!revertInv) return;
-    setIsReverting(true);
-    try {
-      // 1. ATOMICIDADE PARTE 1: Excluir a transação de saída (Despesa/Transferência)
-      // O trigger do banco cuidará de estornar o balance automaticamente na exclusão
-      if (payTxToRevert) {
-        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
-        if (delErr) throw delErr;
-        console.log(`Reversão concluída: +${formatBRL(payTxToRevert.amount)} para a conta ${payTxToRevert.accounts?.name}`);
-      }
-      
-      // 2. ATOMICIDADE PARTE 2: Voltar status da fatura
-      const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
-      if (upErr) throw upErr;
-      
-      toast.success("Fatura revertida e saldo bancário estornado com sucesso!");
-      
-      // 3. ATOMICIDADE PARTE 3: Sincronização da UI
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-    } catch (e: any) {
-      console.error("[Revert Error]", e);
-      toast.error(`Erro crítico ao reverter: ${e.message}`);
-    } finally {
-      setIsReverting(false);
-      setRevertInv(null);
-      setPayTxToRevert(null);
-    }
-  };
-
-  // Funções para Itens Extras
   const saveItem = async () => {
     if (!user || !targetInvoiceForItem || !itemForm.description || !itemForm.unit_price) return;
     const qty = Number(itemForm.quantity) || 1;
     const unit = Number(itemForm.unit_price) || 0;
     const amount = qty * unit;
-
     if (editingItem) {
-      const { error } = await supabase.from("invoice_items").update({
-        description: itemForm.description,
-        quantity: qty,
-        unit_price: unit,
-        amount: amount,
-      }).eq("id", editingItem.id);
-      if (error) { toast.error(error.message); return; }
+      await supabase.from("invoice_items").update({ description: itemForm.description, quantity: qty, unit_price: unit, amount }).eq("id", editingItem.id);
       toast.success("Item atualizado");
     } else {
-      const { error } = await supabase.from("invoice_items").insert({
-        user_id: user.id,
-        invoice_id: targetInvoiceForItem.id,
-        description: itemForm.description,
-        quantity: qty,
-        unit_price: unit,
-        amount: amount,
-      });
-      if (error) { toast.error(error.message); return; }
+      await supabase.from("invoice_items").insert({ user_id: user.id, invoice_id: targetInvoiceForItem.id, description: itemForm.description, quantity: qty, unit_price: unit, amount });
       toast.success("Item adicionado");
     }
-
     await triggerRecompute(targetInvoiceForItem.id);
     setItemDialog(false);
     setEditingItem(null);
-    setTargetInvoiceForItem(null);
   };
 
   const deleteItem = async (item: any) => {
     if (!confirm(`Excluir item "${item.description}"?`)) return;
-    const { error } = await supabase.from("invoice_items").delete().eq("id", item.id);
-    if (error) { toast.error(error.message); return; }
+    await supabase.from("invoice_items").delete().eq("id", item.id);
     await triggerRecompute(item.invoice_id);
     toast.success("Item removido");
   };
 
-  const openEditItem = (item: any, inv: any) => {
-    setEditingItem(item);
-    setTargetInvoiceForItem(inv);
-    setItemForm({
-      description: item.description,
-      quantity: String(item.quantity),
-      unit_price: String(item.unit_price),
-    });
-    setItemDialog(true);
-  };
-
-  // Funções para Ajustes
   const saveAdjustment = async () => {
     if (!user || !adjForm.invoice_id || !adjForm.amount) return;
     const inv = invoices.find((i: any) => i.id === adjForm.invoice_id);
-    const payload: any = {
-      user_id: user.id,
-      invoice_id: adjForm.invoice_id,
-      amount: Number(adjForm.amount),
-      month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual",
-    };
-    if (editingAdj) payload.id = editingAdj.id;
-    const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
-    if (error) { toast.error(error.message); return; }
+    await supabase.from("invoice_initial_balances").upsert({ user_id: user.id, invoice_id: adjForm.invoice_id, amount: Number(adjForm.amount), month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual", id: editingAdj?.id });
     await triggerRecompute(adjForm.invoice_id);
-    toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
+    toast.success("Ajuste salvo");
     setAdjDialog(false);
     setEditingAdj(null);
-    qc.invalidateQueries({ queryKey: ["initial_balances"] });
-  };
-
-  const deleteAdjustment = async (adj: any) => {
-    if (!confirm("Excluir este ajuste?")) return;
-    const { error } = await supabase.from("invoice_initial_balances").delete().eq("id", adj.id);
-    if (error) { toast.error(error.message); return; }
-    await triggerRecompute(adj.invoice_id);
-    toast.success("Ajuste excluído");
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
@@ -323,9 +306,14 @@ function InvoicesPage() {
           <h1 className="font-display text-2xl md:text-3xl font-bold">Faturas</h1>
           <p className="text-sm text-muted-foreground mt-1">Gerencie seus cartões de crédito e pagamentos.</p>
         </div>
-        <Button onClick={() => { setEditingAdj(null); setAdjForm({ invoice_id: "", amount: "" }); setAdjDialog(true); }} variant="outline">
-          <Plus className="h-4 w-4 mr-2" /> Novo Ajuste
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={handleSyncBalances} disabled={isSyncing} variant="secondary" size="sm" className="h-10">
+            <RefreshCw className={cn("h-4 w-4 mr-2", isSyncing && "animate-spin")} /> Sincronizar Saldos
+          </Button>
+          <Button onClick={() => { setEditingAdj(null); setAdjForm({ invoice_id: "", amount: "" }); setAdjDialog(true); }} variant="outline" size="sm" className="h-10">
+            <Plus className="h-4 w-4 mr-2" /> Novo Ajuste
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="pending" className="w-full">
@@ -353,7 +341,7 @@ function InvoicesPage() {
                 isNext={true}
                 onPay={() => { setPayInv(nextInvoice); setPayAccount(cashAccounts[0]?.id ?? ""); }}
                 onAddItem={() => { setTargetInvoiceForItem(nextInvoice); setEditingItem(null); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
-                onEditItem={(item: any) => openEditItem(item, nextInvoice)}
+                onEditItem={(item: any) => { setEditingItem(item); setTargetInvoiceForItem(nextInvoice); setItemForm({ description: item.description, quantity: String(item.quantity), unit_price: String(item.unit_price) }); setItemDialog(true); }}
                 onDeleteItem={deleteItem}
               />
             )}
@@ -369,7 +357,7 @@ function InvoicesPage() {
                     inv={inv}
                     onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
                     onAddItem={() => { setTargetInvoiceForItem(inv); setEditingItem(null); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
-                    onEditItem={(item: any) => openEditItem(item, inv)}
+                    onEditItem={(item: any) => { setEditingItem(item); setTargetInvoiceForItem(inv); setItemForm({ description: item.description, quantity: String(item.quantity), unit_price: String(item.unit_price) }); setItemDialog(true); }}
                     onDeleteItem={deleteItem}
                   />
                 ))}
@@ -401,7 +389,7 @@ function InvoicesPage() {
                         <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
                         <td className="px-4 py-3 text-right">
                           <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4" /></Button>
-                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 hover:text-destructive" /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => { if (confirm("Excluir?")) { supabase.from("invoice_initial_balances").delete().eq("id", adj.id).then(() => { triggerRecompute(adj.invoice_id); qc.invalidateQueries({ queryKey: ["initial_balances"] }); }); } }}><Trash2 className="h-4 w-4 hover:text-destructive" /></Button>
                         </td>
                       </tr>
                     ))}
@@ -421,7 +409,7 @@ function InvoicesPage() {
                 key={inv.id}
                 inv={inv}
                 onRevert={() => handleOpenRevert(inv)}
-                onEditItem={(item: any) => openEditItem(item, inv)}
+                onEditItem={(item: any) => { setEditingItem(item); setTargetInvoiceForItem(inv); setItemForm({ description: item.description, quantity: String(item.quantity), unit_price: String(item.unit_price) }); setItemDialog(true); }}
                 onDeleteItem={deleteItem}
               />
             ))
@@ -433,37 +421,39 @@ function InvoicesPage() {
       <Dialog open={!!revertInv} onOpenChange={(v) => !v && setRevertInv(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Atenção: Confirmar Estorno</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-audit-red">
+              <ShieldAlert className="h-5 w-5" /> Confirmar Estorno Explícito
+            </DialogTitle>
             <DialogDescription>
-              A fatura de <strong>{revertInv?.accounts?.name}</strong> será movida de volta para a lista de pendentes.
+              A fatura de <strong>{revertInv?.accounts?.name}</strong> será movida de volta para pendentes e o saldo bancário será corrigido.
             </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            <div className="rounded-xl bg-surface-2 p-4 border border-border">
+            <div className="rounded-xl bg-surface-2 p-4 border border-border shadow-inner">
               <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Valor a ser Devolvido</div>
               <div className="font-mono font-bold text-2xl text-audit-green">+{formatBRL(revertInv?.total_amount)}</div>
               {payTxToRevert ? (
                 <div className="mt-2 text-xs flex items-center gap-1.5 text-muted-foreground">
-                  <ArrowRight className="h-3 w-3" /> Devolvendo para: <span className="font-semibold text-foreground">{payTxToRevert.accounts?.name}</span>
+                  <ArrowRight className="h-3 w-3" /> Conta de Estorno: <span className="font-semibold text-foreground">{payTxToRevert.accounts?.name}</span>
                 </div>
               ) : (
-                <div className="mt-2 text-xs text-audit-yellow flex items-center gap-1.5">
-                  <AlertCircle className="h-3 w-3" /> Transação de pagamento não localizada. O saldo pode precisar de ajuste manual.
+                <div className="mt-2 text-xs text-audit-yellow flex items-center gap-1.5 bg-audit-yellow/10 p-2 rounded border border-audit-yellow/20">
+                  <AlertCircle className="h-3 w-3 shrink-0" /> Aviso: Lançamento órfão. O estorno será realizado na conta que foi utilizada no pagamento original.
                 </div>
               )}
             </div>
             
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              Ao confirmar, o lançamento de saída será excluído e o valor será somado de volta ao seu saldo bancário imediatamente.
+            <p className="text-xs text-muted-foreground leading-relaxed italic">
+              * Nota: Esta operação é atômica e manual. O lançamento de saída será deletado e o saldo será incrementado via código para garantir a precisão.
             </p>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setRevertInv(null)}>Cancelar</Button>
-            <Button variant="destructive" onClick={confirmRevert} disabled={isReverting}>
+            <Button variant="destructive" onClick={confirmRevert} disabled={isReverting} className="shadow-glow-red">
               {isReverting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RotateCcw className="h-4 w-4 mr-2" />}
-              Sim, Reverter e Estornar
+              Confirmar e Estornar
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -500,12 +490,11 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: ITEM EXTRA (ADICIONAR OU EDITAR) */}
+      {/* MODAL: ITEM EXTRA */}
       <Dialog open={itemDialog} onOpenChange={(v) => { setItemDialog(v); if(!v) {setEditingItem(null); setTargetInvoiceForItem(null);} }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingItem ? "Editar item extra" : "Adicionar item extra"}</DialogTitle>
-            <DialogDescription>Itens extras permitem ajustes manuais que não vêm de transações.</DialogDescription>
+            <DialogTitle>{editingItem ? "Editar item" : "Adicionar item"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div><Label>Descrição</Label><Input value={itemForm.description} onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })} className="mt-1.5" /></div>
@@ -513,7 +502,7 @@ function InvoicesPage() {
               <div><Label>Quantidade</Label><Input type="number" value={itemForm.quantity} onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })} className="mt-1.5" /></div>
               <div><Label>Valor unitário</Label><Input type="number" step="0.01" value={itemForm.unit_price} onChange={(e) => setItemForm({ ...itemForm, unit_price: e.target.value })} className="mt-1.5" /></div>
             </div>
-            <Button onClick={saveItem} className="w-full">{editingItem ? "Salvar Alterações" : "Adicionar"}</Button>
+            <Button onClick={saveItem} className="w-full">{editingItem ? "Salvar" : "Adicionar"}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -521,13 +510,13 @@ function InvoicesPage() {
       {/* MODAL: AJUSTE */}
       <Dialog open={adjDialog} onOpenChange={(v) => { setAdjDialog(v); if (!v) setEditingAdj(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Ajuste de Saldo Inicial</DialogTitle></DialogHeader>
           <div className="space-y-4">
             {!editingAdj && (
               <div>
-                <Label>Fatura de Referência</Label>
+                <Label>Fatura</Label>
                 <Select value={adjForm.invoice_id} onValueChange={(v) => setAdjForm({ ...adjForm, invoice_id: v })}>
-                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a fatura" /></SelectTrigger>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent>
                     {invoices.map((inv: any) => (
                       <SelectItem key={inv.id} value={inv.id}>{inv.accounts?.name} ({monthNames[inv.reference_month - 1]}/{inv.reference_year})</SelectItem>
@@ -536,11 +525,8 @@ function InvoicesPage() {
                 </Select>
               </div>
             )}
-            <div>
-              <Label>Valor do Ajuste (R$)</Label>
-              <Input type="number" step="0.01" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="mt-1.5" />
-            </div>
-            <Button onClick={saveAdjustment} className="w-full">{editingAdj ? "Salvar Alterações" : "Criar Ajuste"}</Button>
+            <div><Label>Valor (R$)</Label><Input type="number" step="0.01" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="mt-1.5" /></div>
+            <Button onClick={saveAdjustment} className="w-full">Salvar Ajuste</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -550,7 +536,6 @@ function InvoicesPage() {
 
 function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDeleteItem }: any) {
   const [expanded, setExpanded] = useState(false);
-
   const { data: details } = useQuery({
     queryKey: ["invoice-details", inv.id],
     queryFn: async () => {
@@ -583,12 +568,10 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDelete
           {isOverdue && <span className="text-[10px] px-2 py-0.5 rounded-full bg-audit-red/20 text-audit-red font-bold">VENCIDA</span>}
         </div>
       )}
-
       <div className="p-4 flex items-start gap-4">
         <div className="h-10 w-10 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
           <CreditCard className="h-5 w-5 text-primary" />
         </div>
-
         <div className="flex-1 min-w-0">
           <div className="font-display font-bold text-base">{inv.accounts?.name}</div>
           <div className="mt-1 flex items-center gap-2 flex-wrap">
@@ -604,7 +587,6 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDelete
           </div>
           <div className="mt-2 font-mono tabular text-2xl font-bold">{formatBRL(Number(inv.total_amount))}</div>
         </div>
-
         <div className="flex flex-col gap-2 shrink-0">
           {!isPaid ? (
             <Button size="sm" onClick={onPay} className="shadow-glow"><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>
@@ -614,7 +596,6 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDelete
           <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</Button>
         </div>
       </div>
-
       {expanded && (
         <div className="border-t border-border bg-surface-2/30 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between">
