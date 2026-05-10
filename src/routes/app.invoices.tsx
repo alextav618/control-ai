@@ -46,10 +46,13 @@ function InvoicesPage() {
   const [revertInv, setRevertInv] = useState<any>(null);
   const [isReverting, setIsReverting] = useState(false);
 
+  // Estados para Itens Extras
   const [itemDialog, setItemDialog] = useState(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
   const [targetInvoiceForItem, setTargetInvoiceForItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
+  // Estados para Ajustes (Saldos Iniciais)
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
   const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
@@ -95,8 +98,7 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
-  // Filtragem e Ordenação Inteligente via useMemo
-  const { unpaidInvoices, nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
+  const { nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
     const unpaid = invoices.filter((i: any) => i.status !== "paid");
     const paid = invoices
       .filter((i: any) => i.status === "paid")
@@ -112,18 +114,18 @@ function InvoicesPage() {
       rest = unpaid.slice(1);
     }
 
-    return { unpaidInvoices: unpaid, nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
+    return { nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
   }, [invoices]);
 
   const triggerRecompute = async (invoiceId: string) => {
     await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
+    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
   };
 
   const confirmPay = async () => {
     if (!user || !payInv || !payAccount) return;
-    
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "transfer",
@@ -135,14 +137,8 @@ function InvoicesPage() {
       status: "paid",
       source: "manual",
     });
-
     if (txErr) { toast.error(txErr.message); return; }
-
-    await supabase.from("invoices").update({ 
-      status: "paid", 
-      paid_at: new Date(payDate + "T12:00:00").toISOString() 
-    }).eq("id", payInv.id);
-
+    await supabase.from("invoices").update({ status: "paid", paid_at: new Date(payDate + "T12:00:00").toISOString() }).eq("id", payInv.id);
     toast.success("Fatura marcada como paga!");
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -154,27 +150,13 @@ function InvoicesPage() {
     if (!revertInv) return;
     setIsReverting(true);
     try {
-      // Busca a transação de pagamento correspondente para remover
-      const { data: payTx } = await supabase
-        .from("transactions")
-        .select("id")
-        .eq("to_account_id", revertInv.account_id)
-        .eq("type", "transfer")
-        .eq("amount", revertInv.total_amount)
-        .maybeSingle();
-
+      const { data: payTx } = await supabase.from("transactions").select("id").eq("to_account_id", revertInv.account_id).eq("type", "transfer").eq("amount", revertInv.total_amount).maybeSingle();
       if (payTx) {
         const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTx.id);
         if (delErr) throw delErr;
       }
-
-      const { error: upErr } = await supabase.from("invoices").update({ 
-        status: "open", 
-        paid_at: null 
-      }).eq("id", revertInv.id);
-      
+      const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
       if (upErr) throw upErr;
-
       toast.success("Fatura revertida para 'Em Aberto'");
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -187,27 +169,61 @@ function InvoicesPage() {
     }
   };
 
+  // Funções para Itens Extras
   const saveItem = async () => {
     if (!user || !targetInvoiceForItem || !itemForm.description || !itemForm.unit_price) return;
     const qty = Number(itemForm.quantity) || 1;
     const unit = Number(itemForm.unit_price) || 0;
-    
-    const { error } = await supabase.from("invoice_items").insert({
-      user_id: user.id,
-      invoice_id: targetInvoiceForItem.id,
-      description: itemForm.description,
-      quantity: qty,
-      unit_price: unit,
-      amount: qty * unit,
-    });
+    const amount = qty * unit;
 
-    if (error) { toast.error(error.message); return; }
+    if (editingItem) {
+      const { error } = await supabase.from("invoice_items").update({
+        description: itemForm.description,
+        quantity: qty,
+        unit_price: unit,
+        amount: amount,
+      }).eq("id", editingItem.id);
+      if (error) { toast.error(error.message); return; }
+      toast.success("Item atualizado");
+    } else {
+      const { error } = await supabase.from("invoice_items").insert({
+        user_id: user.id,
+        invoice_id: targetInvoiceForItem.id,
+        description: itemForm.description,
+        quantity: qty,
+        unit_price: unit,
+        amount: amount,
+      });
+      if (error) { toast.error(error.message); return; }
+      toast.success("Item adicionado");
+    }
+
     await triggerRecompute(targetInvoiceForItem.id);
-    toast.success("Item adicionado");
     setItemDialog(false);
+    setEditingItem(null);
     setTargetInvoiceForItem(null);
   };
 
+  const deleteItem = async (item: any) => {
+    if (!confirm(`Excluir item "${item.description}"?`)) return;
+    const { error } = await supabase.from("invoice_items").delete().eq("id", item.id);
+    if (error) { toast.error(error.message); return; }
+    await triggerRecompute(item.invoice_id);
+    toast.success("Item removido");
+  };
+
+  const openEditItem = (item: any, inv: any) => {
+    setEditingItem(item);
+    setTargetInvoiceForItem(inv);
+    setItemForm({
+      description: item.description,
+      quantity: String(item.quantity),
+      unit_price: String(item.unit_price),
+    });
+    setItemDialog(true);
+  };
+
+  // Funções para Ajustes
   const saveAdjustment = async () => {
     if (!user || !adjForm.invoice_id || !adjForm.amount) return;
     const inv = invoices.find((i: any) => i.id === adjForm.invoice_id);
@@ -272,7 +288,9 @@ function InvoicesPage() {
                 inv={nextInvoice}
                 isNext={true}
                 onPay={() => { setPayInv(nextInvoice); setPayAccount(cashAccounts[0]?.id ?? ""); }}
-                onAddItem={() => { setTargetInvoiceForItem(nextInvoice); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                onAddItem={() => { setTargetInvoiceForItem(nextInvoice); setEditingItem(null); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                onEditItem={(item: any) => openEditItem(item, nextInvoice)}
+                onDeleteItem={deleteItem}
               />
             )}
           </section>
@@ -286,7 +304,9 @@ function InvoicesPage() {
                     key={inv.id}
                     inv={inv}
                     onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
-                    onAddItem={() => { setTargetInvoiceForItem(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                    onAddItem={() => { setTargetInvoiceForItem(inv); setEditingItem(null); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                    onEditItem={(item: any) => openEditItem(item, inv)}
+                    onDeleteItem={deleteItem}
                   />
                 ))}
               </div>
@@ -338,6 +358,8 @@ function InvoicesPage() {
                 key={inv.id}
                 inv={inv}
                 onRevert={() => setRevertInv(inv)}
+                onEditItem={(item: any) => openEditItem(item, inv)}
+                onDeleteItem={deleteItem}
               />
             ))
           )}
@@ -400,17 +422,20 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL: ITEM EXTRA */}
-      <Dialog open={itemDialog} onOpenChange={setItemDialog}>
+      {/* MODAL: ITEM EXTRA (ADICIONAR OU EDITAR) */}
+      <Dialog open={itemDialog} onOpenChange={(v) => { setItemDialog(v); if(!v) {setEditingItem(null); setTargetInvoiceForItem(null);} }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Adicionar item extra</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingItem ? "Editar item extra" : "Adicionar item extra"}</DialogTitle>
+            <DialogDescription>Itens extras permitem ajustes manuais que não vêm de transações.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <div><Label>Descrição</Label><Input value={itemForm.description} onChange={(e) => setItemForm({ ...itemForm, description: e.target.value })} className="mt-1.5" /></div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Quantidade</Label><Input type="number" value={itemForm.quantity} onChange={(e) => setItemForm({ ...itemForm, quantity: e.target.value })} className="mt-1.5" /></div>
               <div><Label>Valor unitário</Label><Input type="number" step="0.01" value={itemForm.unit_price} onChange={(e) => setItemForm({ ...itemForm, unit_price: e.target.value })} className="mt-1.5" /></div>
             </div>
-            <Button onClick={saveItem} className="w-full">Adicionar</Button>
+            <Button onClick={saveItem} className="w-full">{editingItem ? "Salvar Alterações" : "Adicionar"}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -445,7 +470,7 @@ function InvoicesPage() {
   );
 }
 
-function InvCard({ inv, isNext, onPay, onAddItem, onRevert }: any) {
+function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDeleteItem }: any) {
   const [expanded, setExpanded] = useState(false);
 
   const { data: details } = useQuery({
@@ -535,12 +560,20 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert }: any) {
               </div>
             ))}
             {details?.items.map((it: any) => (
-              <div key={it.id} className="flex items-center justify-between py-1.5 text-sm text-primary">
+              <div key={it.id} className="group flex items-center justify-between py-1.5 text-sm text-primary">
                 <div className="flex items-center gap-2 truncate">
                   <span className="text-[10px] px-1 rounded bg-primary/10">EXTRA</span>
                   <span className="truncate">{it.description} {it.quantity > 1 ? `(x${it.quantity})` : ""}</span>
                 </div>
-                <span className="font-mono tabular">{formatBRL(Number(it.amount))}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono tabular">{formatBRL(Number(it.amount))}</span>
+                  {!isPaid && (
+                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-primary hover:bg-primary/10" onClick={() => onEditItem(it)}><Pencil className="h-3.5 w-3.5" /></Button>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" onClick={() => onDeleteItem(it)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             {!details && <div className="text-center py-4 text-xs text-muted-foreground">Carregando...</div>}
