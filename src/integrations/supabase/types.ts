@@ -534,7 +534,7 @@ export type Database = {
           user_id: string
         }
         Update: {
-          account_id?: string | null
+          account_id?: string
           closing_date?: string
           created_at?: string
           due_date?: string
@@ -638,7 +638,6 @@ export type Database = {
       transactions: {
         Row: {
           account_id: string | null
-          to_account_id: string | null
           ai_raw: Json | null
           amount: number
           attachment_url: string | null
@@ -656,13 +655,13 @@ export type Database = {
           payment_method: string | null
           source: string
           status: Database["public"]["Enums"]["transaction_status"]
+          to_account_id: string | null
           type: Database["public"]["Enums"]["transaction_type"]
           updated_at: string
           user_id: string
         }
         Insert: {
           account_id?: string | null
-          to_account_id?: string | null
           ai_raw?: Json | null
           amount: number
           attachment_url?: string | null
@@ -680,13 +679,13 @@ export type Database = {
           payment_method?: string | null
           source?: string
           status?: Database["public"]["Enums"]["transaction_status"]
+          to_account_id?: string | null
           type: Database["public"]["Enums"]["transaction_type"]
           updated_at?: string
           user_id: string
         }
         Update: {
           account_id?: string | null
-          to_account_id?: string | null
           ai_raw?: Json | null
           amount?: number
           attachment_url?: string | null
@@ -704,6 +703,7 @@ export type Database = {
           payment_method?: string | null
           source?: string
           status?: Database["public"]["Enums"]["transaction_status"]
+          to_account_id?: string | null
           type?: Database["public"]["Enums"]["transaction_type"]
           updated_at?: string
           user_id?: string
@@ -712,13 +712,6 @@ export type Database = {
           {
             foreignKeyName: "transactions_account_id_fkey"
             columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "transactions_to_account_id_fkey"
-            columns: ["to_account_id"]
             isOneToOne: false
             referencedRelation: "accounts"
             referencedColumns: ["id"]
@@ -749,6 +742,13 @@ export type Database = {
             columns: ["invoice_id"]
             isOneToOne: false
             referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_to_account_id_fkey"
+            columns: ["to_account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
             referencedColumns: ["id"]
           },
         ]
