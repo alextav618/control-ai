@@ -24,6 +24,7 @@ const PAYMENT_METHODS = [
   { value: "transferencia", label: "Transferência" },
   { value: "boleto", label: "Boleto" },
   { value: "debito", label: "Débito" },
+  // { value: "credito", label: "Crédito" }, // Removido para evitar redundância com a aba de cartões
   { value: "dinheiro", label: "Dinheiro" },
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
@@ -136,21 +137,20 @@ function TxPage() {
     ...t,
     categories: cats.find((c: any) => c.id === t.category_id),
     accounts: accounts.find((a: any) => a.id === t.account_id),
-    to_account: accounts.find((a: any) => a.id === t.to_account_id),
   })), [rawTx, cats, accounts]);
 
   const filteredTx = useMemo(() => tx.filter((t: any) => {
     const matchesSearch = (t.description || "").toLowerCase().includes(search.toLowerCase());
     const matchesCategory = filterCategory === "all" || t.category_id === filterCategory;
-    const matchesAccount = filterAccount === "all" || t.account_id === filterAccount || t.to_account_id === filterAccount;
+    const matchesAccount = filterAccount === "all" || t.account_id === filterAccount;
     const matchesType = filterType === "all" || t.type === filterType;
     return matchesSearch && matchesCategory && matchesAccount && matchesType;
   }), [tx, search, filterCategory, filterAccount, filterType]);
 
   const summary = useMemo(() => {
-    // Transferências são ignoradas nos totais de receita e despesa
-    const income = filteredTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
-    const expense = filteredTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+    const validTx = filteredTx.filter(t => t.type !== 'transfer');
+    const income = validTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
+    const expense = validTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
     return { income, expense, balance: income - expense };
   }, [filteredTx]);
 
@@ -181,20 +181,25 @@ function TxPage() {
       const isCard = account?.type === "credit_card";
 
       if (form.type === "transfer") {
-        if (!form.to_account_id) { toast.error("Selecione a conta de destino"); return; }
-        const { error } = await supabase.from('transactions').insert({
+        const row = {
           user_id: user.id,
-          type: "transfer",
-          description: form.description || "Transferência interna",
+          type: "transfer" as const,
+          description: form.description,
           amount: amountNum,
           occurred_on: form.occurred_on,
           account_id: form.account_id,
           to_account_id: form.to_account_id,
           payment_method: "transferencia",
-          status: "paid",
+          status: "paid" as const,
           source: "manual"
-        });
-        if (error) throw error;
+        };
+        if (editId) {
+          const { error } = await supabase.from('transactions').update(row).eq('id', editId);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('transactions').insert(row);
+          if (error) throw error;
+        }
       } else {
         const installments = Math.max(1, Number(form.installments) || 1);
         const installmentAmount = +(amountNum / installments).toFixed(2);
@@ -215,10 +220,16 @@ function TxPage() {
           }
           rows.push({ user_id: user.id, type: form.type, description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description, amount: installmentAmount, occurred_on: occurred, account_id: account.id, category_id: form.category_id || null, payment_method: form.payment_method, installment_plan_id: planId, installment_number: installments > 1 ? i + 1 : null, invoice_id: invoiceId, status: "paid", source: "manual" });
         }
-        const { error } = await supabase.from('transactions').insert(rows);
-        if (error) throw error;
-        const invIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
-        for (const id of invIds) await recomputeInvoiceTotal(id);
+        if (editId) {
+          // Edição: atualiza apenas o primeiro registro
+          const { error } = await supabase.from('transactions').update(rows[0]).eq('id', editId);
+          if (error) throw error;
+        } else {
+          const { error } = await supabase.from('transactions').insert(rows);
+          if (error) throw error;
+          const invIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
+          for (const id of invIds) await recomputeInvoiceTotal(id);
+        }
       }
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -230,13 +241,67 @@ function TxPage() {
 
   const removeTx = async (id: string) => {
     if (!confirm("Excluir este lançamento?")) return;
-    const { error } = await supabase.from("transactions").delete().eq("id", id);
-    if (error) toast.error(error.message);
-    else {
-      toast.success("Excluído");
+    try {
+      // Buscar a transação antes de excluir para ter o invoice_id
+      const { data: txToDelete } = await supabase
+        .from("transactions")
+        .select("id, invoice_id")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (!txToDelete) {
+        toast.error("Lançamento não encontrado. Ele pode já ter sido excluído.");
+        qc.invalidateQueries({ queryKey: ["transactions"] });
+        return;
+      }
+
+      const { error, count } = await supabase
+        .from("transactions")
+        .delete({ count: "exact" })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Erro ao excluir lançamento:", error);
+        toast.error(`Erro ao excluir: ${error.message}`);
+        return;
+      }
+
+      if (count === 0) {
+        toast.error("Não foi possível excluir. Verifique suas permissões.");
+        return;
+      }
+
+      // Recomputar total da fatura, se houver
+      if (txToDelete.invoice_id) {
+        await recomputeInvoiceTotal(txToDelete.invoice_id);
+      }
+
+      toast.success("Lançamento excluído com sucesso!");
       qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    } catch (e: any) {
+      console.error("Erro inesperado ao excluir:", e);
+      toast.error(`Erro inesperado: ${e.message}`);
     }
+  };
+
+  const editTx = (t: any) => {
+    setForm({
+      type: t.type,
+      description: t.description,
+      amount: String(t.amount),
+      occurred_on: t.occurred_on,
+      account_id: t.account_id || "",
+      to_account_id: t.to_account_id || "",
+      category_id: t.category_id || "",
+      payment_method: t.payment_method || "debito",
+      installments: "1",
+    });
+    setEditId(t.id);
+    setActiveFormTab(t.type === "credit_card" ? "credit" : "common");
+    setOpen(true);
   };
 
   const cashAccounts = accounts.filter(a => a.type !== "credit_card");
@@ -247,9 +312,10 @@ function TxPage() {
       return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
     }
     if (form.type === "income") {
-      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value));
+      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value)); // Adicionado Dinheiro para Receita
     }
-    return PAYMENT_METHODS.filter(m => m.value !== "deposito");
+    // Para despesas, inclui todas as opções, incluindo Dinheiro
+    return PAYMENT_METHODS.filter(m => m.value !== "deposito"); // Remove depósito das despesas
   }, [form.type]);
 
   return (
@@ -263,7 +329,7 @@ function TxPage() {
               <DialogTitle>Novo lançamento</DialogTitle>
               <DialogDescription>Escolha o tipo de lançamento para continuar.</DialogDescription>
             </DialogHeader>
-            
+
             <Tabs value={activeFormTab} onValueChange={(v) => {
               setActiveFormTab(v);
               if (v === "credit") {
@@ -308,7 +374,7 @@ function TxPage() {
                 </div>
 
                 <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Almoço, Salário, Transferência..." className="mt-1.5" /></div>
-                
+
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0,00" className="mt-1.5" /></div>
                   {activeFormTab === "credit" && (
@@ -322,7 +388,7 @@ function TxPage() {
                     <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
                       <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                       <SelectContent>
-                        {(activeFormTab === "credit" ? creditCards : accounts).map((a: any) => (
+                        {(activeFormTab === "credit" ? creditCards : cashAccounts).map((a: any) => (
                           <SelectItem key={a.id} value={a.id}>
                             <div className="flex items-center gap-2">
                               <span>{a.icon || (a.type === 'credit_card' ? "💳" : "🏦")}</span>
@@ -334,40 +400,20 @@ function TxPage() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {form.type !== "transfer" ? (
-                    <div>
-                      <Label>Categoria</Label>
-                      <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                        <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                        <SelectContent>
-                          {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
-                            <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ) : (
-                    <div>
-                      <Label>Conta de Destino</Label>
-                      <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
-                        <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                        <SelectContent>
-                          {accounts.filter(a => a.id !== form.account_id).map((a: any) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              <div className="flex items-center gap-2">
-                                <span>{a.icon || "🏦"}</span>
-                                <span className="truncate">{a.name}</span>
-                                <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
-                              </div>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
+                  <div>
+                    <Label>Categoria</Label>
+                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                      <SelectContent>
+                        {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
+                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
 
-                {activeFormTab === "common" && form.type !== "transfer" && (
+                {activeFormTab === "common" && (
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label>Forma de Pagamento</Label>
@@ -380,11 +426,30 @@ function TxPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    {form.type === "transfer" && (
+                      <div>
+                        <Label>Conta de Destino</Label>
+                        <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                          <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                          <SelectContent>
+                            {cashAccounts.filter(a => a.id !== form.account_id).map((a: any) => (
+                              <SelectItem key={a.id} value={a.id}>
+                                <div className="flex items-center gap-2">
+                                  <span>{a.icon || "🏦"}</span>
+                                  <span className="truncate">{a.name}</span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">({ACCOUNT_TYPE_LABELS[a.type]})</span>
+                                </div>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-              
-              <Button onClick={submit} disabled={submitting} className="w-full mt-4">{submitting ? "Salvando..." : "Lançar"}</Button>
+
+              <Button onClick={submit} disabled={submitting} className="w-full mt-4">{submitting ? "Salvando..." : editId ? "Salvar Alterações" : "Lançar"}</Button>
             </Tabs>
           </DialogContent>
         </Dialog>
@@ -392,15 +457,15 @@ function TxPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Receitas Reais</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Receitas</div>
           <div className="font-mono font-bold text-lg tabular text-income">{formatBRL(summary.income)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Despesas Reais</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Despesas</div>
           <div className="font-mono font-bold text-lg tabular text-expense">{formatBRL(summary.expense)}</div>
         </div>
         <div className="rounded-2xl border border-border bg-surface-1 p-4">
-          <div className="text-xs text-muted-foreground uppercase tracking-wider">Fluxo Líquido</div>
+          <div className="text-xs text-muted-foreground uppercase tracking-wider">Saldo</div>
           <div className="font-mono font-bold text-lg tabular">{formatBRL(summary.balance)}</div>
         </div>
       </div>
@@ -427,12 +492,12 @@ function TxPage() {
         ) : groupedTx.length === 0 ? (
           <div className="text-center py-20 border border-dashed rounded-2xl text-muted-foreground">Nenhum lançamento encontrado.</div>
         ) : (
-          groupedTx.map(([date, items]) => (
+          groupedTx.map(([date, dayTxs]) => (
             <div key={date} className="space-y-2">
               <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-widest px-1">{formatDateBR(date)}</h3>
               <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden divide-y divide-border">
-                {items.map((t: any) => (
-                  <TxRow key={t.id} t={t} onDelete={() => removeTx(t.id)} />
+                {dayTxs.map((t: any) => (
+                  <TxRow key={t.id} t={t} accounts={accounts} onDelete={() => removeTx(t.id)} onEdit={() => editTx(t)} />
                 ))}
               </div>
             </div>
@@ -443,13 +508,15 @@ function TxPage() {
   );
 }
 
-function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
+function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onDelete: () => void; onEdit: () => void }) {
   const isTransfer = t.type === "transfer";
+  const toAccount = isTransfer ? accounts.find((a: any) => a.id === t.to_account_id) : null;
+
   return (
-    <div className="p-4 flex items-center gap-4 hover:bg-surface-2 transition-colors group">
+    <div className="p-4 flex items-center gap-3 hover:bg-surface-2 transition-colors">
       <div className="flex items-center gap-3 flex-1 min-w-0">
         <div className="h-9 w-9 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-          {isTransfer ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
+          {isTransfer ? "🔄" : (t.categories?.icon || "📦")}
         </div>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -459,9 +526,9 @@ function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
           <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
             {isTransfer ? (
               <>
-                <span className="font-medium text-foreground">{t.accounts?.name}</span>
+                <span className="font-medium text-primary">{t.accounts?.name}</span>
                 <ArrowRightLeft className="h-3 w-3" />
-                <span className="font-medium text-foreground">{t.to_account?.name}</span>
+                <span className="font-medium text-primary">{toAccount?.name || "Conta destino"}</span>
               </>
             ) : (
               <>
@@ -479,15 +546,18 @@ function TxRow({ t, onDelete }: { t: any; onDelete: () => void }) {
           </div>
         </div>
       </div>
-      <div className="text-right shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         <div className={cn(
-          "font-mono tabular font-semibold", 
-          isTransfer ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
+          "font-mono tabular font-semibold text-sm mr-2",
+          t.type === "income" ? "text-income" : t.type === "expense" ? "text-expense" : "text-muted-foreground"
         )}>
-          {isTransfer ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
+          {t.type === "income" ? "+" : t.type === "expense" ? "-" : ""}{formatBRL(Number(t.amount))}
         </div>
-        <Button variant="ghost" size="icon" onClick={onDelete} className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
-          <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
+        <Button variant="ghost" size="icon" onClick={onEdit} className="h-8 w-8 shrink-0" title="Editar">
+          <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+        </Button>
+        <Button variant="ghost" size="icon" onClick={onDelete} className="h-8 w-8 shrink-0" title="Excluir">
+          <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
         </Button>
       </div>
     </div>
