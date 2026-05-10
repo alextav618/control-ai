@@ -6,8 +6,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, monthNames, localDateString } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2 } from "lucide-react";
@@ -94,15 +94,14 @@ function InvoicesPage() {
     if (!user || !payInv || !payAccount) return;
     const totalAmount = Number(payInv.total_amount);
 
-    // Pagamento de fatura é uma TRANSFERÊNCIA da conta corrente para o cartão
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "transfer",
       amount: totalAmount,
       description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
       occurred_on: payDate,
-      account_id: payAccount, // Origem
-      to_account_id: payInv.account_id, // Destino (Cartão)
+      account_id: payAccount,
+      to_account_id: payInv.account_id,
       status: "paid",
       source: "manual",
     });
