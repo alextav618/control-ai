@@ -9,9 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock } from "lucide-react";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -43,10 +43,8 @@ function InvoicesPage() {
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
 
-  const [editPayInv, setEditPayInv] = useState<any>(null);
-  const [editPayAccount, setEditPayAccount] = useState("");
-  const [editPayDate, setEditPayDate] = useState("");
-  const [editPayDialog, setEditPayDialog] = useState(false);
+  const [revertInv, setRevertInv] = useState<any>(null);
+  const [isReverting, setIsReverting] = useState(false);
 
   const [itemDialog, setItemDialog] = useState(false);
   const [targetInvoiceForItem, setTargetInvoiceForItem] = useState<any>(null);
@@ -97,23 +95,19 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
-  // Filtragem e Ordenação Inteligente via useMemo (Transição Instantânea)
+  // Filtragem e Ordenação Inteligente via useMemo
   const { unpaidInvoices, nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
     const unpaid = invoices.filter((i: any) => i.status !== "paid");
     const paid = invoices
       .filter((i: any) => i.status === "paid")
       .sort((a, b) => {
-        // Ordem decrescente por ano e mês de referência
         if (a.reference_year !== b.reference_year) return b.reference_year - a.reference_year;
         return b.reference_month - a.reference_month;
       });
 
-    // Identifica a próxima fatura a vencer (mais próxima de 10/05/2026)
     let next: any = null;
     let rest: any[] = [];
-
     if (unpaid.length > 0) {
-      // Já estão ordenadas por due_date ASC no queryFn
       next = unpaid[0];
       rest = unpaid.slice(1);
     }
@@ -121,12 +115,10 @@ function InvoicesPage() {
     return { unpaidInvoices: unpaid, nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
   }, [invoices]);
 
-  // Ações
   const triggerRecompute = async (invoiceId: string) => {
     await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
-    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
   };
 
   const confirmPay = async () => {
@@ -151,70 +143,48 @@ function InvoicesPage() {
       paid_at: new Date(payDate + "T12:00:00").toISOString() 
     }).eq("id", payInv.id);
 
-    toast.success("Fatura paga ✓");
+    toast.success("Fatura marcada como paga!");
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
-  const deletePayment = async (inv: any) => {
-    if (!confirm(`Desfazer pagamento da fatura ${inv.accounts?.name} (${monthNames[inv.reference_month - 1]}/${inv.reference_year})?`)) return;
-
-    const { data: payTx } = await supabase
-      .from("transactions")
-      .select("id")
-      .eq("to_account_id", inv.account_id)
-      .eq("type", "transfer")
-      .eq("amount", inv.total_amount)
-      .maybeSingle();
-
-    if (payTx) {
-      await supabase.from("transactions").delete().eq("id", payTx.id);
-    }
-
-    await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", inv.id);
-    
-    toast.success("Pagamento desfeito — fatura reaberta");
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
-
-  const openEditPayment = async (inv: any) => {
-    const { data: payTx } = await supabase
-      .from("transactions")
-      .select("id, account_id, occurred_on")
-      .eq("to_account_id", inv.account_id)
-      .eq("type", "transfer")
-      .eq("amount", inv.total_amount)
-      .maybeSingle();
-
-    setEditPayInv({ ...inv, payTxId: payTx?.id });
-    setEditPayAccount(payTx?.account_id ?? cashAccounts[0]?.id ?? "");
-    setEditPayDate(payTx?.occurred_on ?? localDateString());
-    setEditPayDialog(true);
-  };
-
-  const confirmEditPayment = async () => {
-    if (!editPayInv) return;
-    if (editPayInv.payTxId) {
-      const { error } = await supabase
+  const confirmRevert = async () => {
+    if (!revertInv) return;
+    setIsReverting(true);
+    try {
+      // Busca a transação de pagamento correspondente para remover
+      const { data: payTx } = await supabase
         .from("transactions")
-        .update({ account_id: editPayAccount, occurred_on: editPayDate })
-        .eq("id", editPayInv.payTxId);
-      if (error) { toast.error(error.message); return; }
-    }
-    
-    await supabase.from("invoices").update({ 
-      paid_at: new Date(editPayDate + "T12:00:00").toISOString() 
-    }).eq("id", editPayInv.id);
+        .select("id")
+        .eq("to_account_id", revertInv.account_id)
+        .eq("type", "transfer")
+        .eq("amount", revertInv.total_amount)
+        .maybeSingle();
 
-    toast.success("Pagamento atualizado!");
-    setEditPayDialog(false);
-    setEditPayInv(null);
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
+      if (payTx) {
+        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTx.id);
+        if (delErr) throw delErr;
+      }
+
+      const { error: upErr } = await supabase.from("invoices").update({ 
+        status: "open", 
+        paid_at: null 
+      }).eq("id", revertInv.id);
+      
+      if (upErr) throw upErr;
+
+      toast.success("Fatura revertida para 'Em Aberto'");
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    } catch (e: any) {
+      toast.error(`Erro ao reverter: ${e.message}`);
+    } finally {
+      setIsReverting(false);
+      setRevertInv(null);
+    }
   };
 
   const saveItem = async () => {
@@ -241,7 +211,6 @@ function InvoicesPage() {
   const saveAdjustment = async () => {
     if (!user || !adjForm.invoice_id || !adjForm.amount) return;
     const inv = invoices.find((i: any) => i.id === adjForm.invoice_id);
-    
     const payload: any = {
       user_id: user.id,
       invoice_id: adjForm.invoice_id,
@@ -249,10 +218,8 @@ function InvoicesPage() {
       month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual",
     };
     if (editingAdj) payload.id = editingAdj.id;
-
     const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
     if (error) { toast.error(error.message); return; }
-    
     await triggerRecompute(adjForm.invoice_id);
     toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
     setAdjDialog(false);
@@ -291,8 +258,7 @@ function InvoicesPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="pending" className="space-y-10 animate-in fade-in duration-200">
-          {/* PRÓXIMA FATURA (DESTAQUE) */}
+        <TabsContent value="pending" className="space-y-10">
           <section>
             <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
               <AlertCircle className="h-4 w-4 text-primary" /> Próxima Fatura a Vencer
@@ -311,7 +277,6 @@ function InvoicesPage() {
             )}
           </section>
 
-          {/* DEMAIS FATURAS FUTURAS */}
           {restOfUnpaid.length > 0 && (
             <section>
               <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest">Outras Faturas Pendentes</h2>
@@ -328,68 +293,81 @@ function InvoicesPage() {
             </section>
           )}
 
-          {/* AJUSTES DE SALDO (Disponíveis em Pendentes) */}
+          {/* AJUSTES DE SALDO */}
           <section className="pt-6 border-t border-border/50">
             <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
               <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
             </h2>
-            <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
-              {adjLoading ? (
-                <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-              ) : initialBalances.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">Nenhum ajuste manual lançado.</div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-surface-2/50 border-b border-border">
-                      <tr>
-                        <th className="px-4 py-3 font-semibold">Cartão / Mês</th>
-                        <th className="px-4 py-3 font-semibold">Valor</th>
-                        <th className="px-4 py-3 font-semibold text-right">Ações</th>
+            <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-surface-2/50 border-b border-border">
+                    <tr>
+                      <th className="px-4 py-3">Cartão / Mês</th>
+                      <th className="px-4 py-3">Valor</th>
+                      <th className="px-4 py-3 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {initialBalances.map((adj: any) => (
+                      <tr key={adj.id}>
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{adj.invoices?.accounts?.name}</div>
+                          <div className="text-xs text-muted-foreground">{monthNames[adj.invoices.reference_month - 1]}/{adj.invoices.reference_year}</div>
+                        </td>
+                        <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
+                        <td className="px-4 py-3 text-right">
+                          <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 hover:text-destructive" /></Button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {initialBalances.map((adj: any) => (
-                        <tr key={adj.id} className="hover:bg-surface-2/30 transition-colors">
-                          <td className="px-4 py-3">
-                            <div className="font-medium">{adj.invoices?.accounts?.name || "Fatura removida"}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {adj.invoices ? `${monthNames[adj.invoices.reference_month - 1]}/${adj.invoices.reference_year}` : adj.month_year}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
-                          <td className="px-4 py-3 text-right flex justify-end gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                            <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </section>
         </TabsContent>
 
-        <TabsContent value="archive" className="space-y-4 animate-in fade-in duration-200">
-          <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest">Arquivo de Faturas Pagas</h2>
+        <TabsContent value="archive" className="space-y-4">
           {paidInvoices.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nenhuma fatura paga encontrada.</div>
+            <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nenhuma fatura paga.</div>
           ) : (
-            <div className="space-y-4">
-              {paidInvoices.map((inv: any) => (
-                <InvCard
-                  key={inv.id}
-                  inv={inv}
-                  onDeletePayment={() => deletePayment(inv)}
-                  onEditPayment={() => openEditPayment(inv)}
-                />
-              ))}
-            </div>
+            paidInvoices.map((inv: any) => (
+              <InvCard
+                key={inv.id}
+                inv={inv}
+                onRevert={() => setRevertInv(inv)}
+              />
+            ))
           )}
         </TabsContent>
       </Tabs>
+
+      {/* MODAL: REVERTER PAGAMENTO */}
+      <Dialog open={!!revertInv} onOpenChange={(v) => !v && setRevertInv(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reverter para 'Em Aberto'?</DialogTitle>
+            <DialogDescription>
+              A fatura de <strong>{revertInv?.accounts?.name}</strong> será movida de volta para a lista de pendentes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 text-sm text-audit-yellow flex items-start gap-3 bg-audit-yellow/10 p-4 rounded-xl border border-audit-yellow/20">
+            <AlertCircle className="h-5 w-5 shrink-0" />
+            <div>
+              <strong>Atenção:</strong> O registro de saída (transferência) vinculado a este pagamento será excluído para manter a sincronia dos saldos.
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="ghost" onClick={() => setRevertInv(null)}>Cancelar</Button>
+            <Button variant="destructive" onClick={confirmRevert} disabled={isReverting}>
+              {isReverting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RotateCcw className="h-4 w-4 mr-2" />}
+              Sim, Reverter
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* MODAL: PAGAR */}
       <Dialog open={!!payInv} onOpenChange={(v) => !v && setPayInv(null)}>
@@ -463,42 +441,11 @@ function InvoicesPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* MODAL: EDITAR PAGAMENTO */}
-      <Dialog open={editPayDialog} onOpenChange={setEditPayDialog}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Editar pagamento</DialogTitle></DialogHeader>
-          {editPayInv && (
-            <div className="space-y-4">
-              <div className="rounded-xl bg-surface-2 p-4 border border-border">
-                <div className="text-xs text-muted-foreground">{editPayInv.accounts?.name} · {monthNames[editPayInv.reference_month - 1]}/{editPayInv.reference_year}</div>
-                <div className="font-mono tabular text-2xl font-bold mt-1">{formatBRL(Number(editPayInv.total_amount))}</div>
-              </div>
-              <div>
-                <Label>Pagar com</Label>
-                <Select value={editPayAccount} onValueChange={setEditPayAccount}>
-                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Escolha a conta" /></SelectTrigger>
-                  <SelectContent>
-                    {cashAccounts.map((a: any) => (
-                      <SelectItem key={a.id} value={a.id}>{a.name} · {formatBRL(Number(a.current_balance))}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Data do pagamento</Label>
-                <Input type="date" value={editPayDate} onChange={(e) => setEditPayDate(e.target.value)} className="mt-1.5" />
-              </div>
-              <Button onClick={confirmEditPayment} className="w-full"><Check className="h-4 w-4 mr-2" />Salvar alterações</Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
 
-function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment }: any) {
+function InvCard({ inv, isNext, onPay, onAddItem, onRevert }: any) {
   const [expanded, setExpanded] = useState(false);
 
   const { data: details } = useQuery({
@@ -556,9 +503,11 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
         </div>
 
         <div className="flex flex-col gap-2 shrink-0">
-          {!isPaid && onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>}
-          {isPaid && onEditPayment && <Button size="sm" variant="outline" onClick={onEditPayment}><Pencil className="h-3.5 w-3.5" /></Button>}
-          {isPaid && onDeletePayment && <Button size="sm" variant="ghost" onClick={onDeletePayment}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>}
+          {!isPaid ? (
+            <Button size="sm" onClick={onPay} className="shadow-glow"><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onRevert} className="text-muted-foreground hover:text-foreground"><RotateCcw className="h-3.5 w-3.5 mr-1.5" />Reverter</Button>
+          )}
           <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</Button>
         </div>
       </div>
