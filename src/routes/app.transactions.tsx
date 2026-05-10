@@ -147,6 +147,19 @@ function TxPage() {
 
     setSubmitting(true);
     try {
+      let invoiceId = null;
+      const account = accounts.find(a => a.id === form.account_id);
+      
+      // Lógica de Fatura Automática para Cartão de Crédito
+      if (account?.type === 'credit_card') {
+        const { data: invId, error: invErr } = await supabase.rpc('ensure_invoice', {
+          p_account_id: form.account_id,
+          p_date: form.occurred_on
+        });
+        if (invErr) throw invErr;
+        invoiceId = invId;
+      }
+
       const payload: any = {
         user_id: user.id,
         type: form.type,
@@ -156,7 +169,8 @@ function TxPage() {
         account_id: form.account_id,
         to_account_id: form.type === "transfer" ? form.to_account_id : null,
         category_id: form.category_id || null,
-        payment_method: form.payment_method,
+        payment_method: account?.type === 'credit_card' ? 'credito' : form.payment_method,
+        invoice_id: invoiceId
       };
 
       if (editId) {
@@ -457,11 +471,15 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
   const isTransfer = t.type === "transfer";
   const toAccount = isTransfer ? accounts.find((a: any) => a.id === t.to_account_id) : null;
   const isLinked = !!t.installment_plan_id;
+  const isCredit = t.accounts?.type === 'credit_card' || t.payment_method === 'credito';
 
   return (
     <div className="p-4 flex items-center gap-3 hover:bg-surface-2/50 transition-colors group">
       <div className="flex items-center gap-4 flex-1 min-w-0">
-        <div className="h-10 w-10 rounded-xl bg-surface-2 flex items-center justify-center shrink-0 text-xl shadow-sm">
+        <div className={cn(
+          "h-10 w-10 rounded-xl flex items-center justify-center shrink-0 text-xl shadow-sm",
+          isCredit ? "bg-orange-500/10 border border-orange-500/20" : "bg-surface-2"
+        )}>
           {isTransfer ? "🔄" : (t.categories?.icon || "📦")}
         </div>
         <div className="min-w-0">
@@ -469,7 +487,11 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
             <span className="font-display font-semibold truncate text-sm">{t.description}</span>
             {isLinked && <LinkIcon className="h-3 w-3 text-primary shrink-0" title="Parte de um parcelamento" />}
             {t.audit_level && <AuditIndicator level={t.audit_level} reason={t.audit_reason} />}
-            {t.invoice_id && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-bold border border-primary/20 shrink-0">FATURA</span>}
+            {t.invoice_id && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/10 text-orange-500 font-bold border border-orange-500/20 shrink-0 flex items-center gap-1">
+                <CreditCard className="h-2 w-2" /> FATURA
+              </span>
+            )}
           </div>
           <div className="text-[11px] text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
             {isTransfer ? (
@@ -480,7 +502,7 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
               </>
             ) : (
               <>
-                <span>{t.accounts?.name}</span>
+                <span className={isCredit ? "text-orange-500/80" : ""}>{t.accounts?.name}</span>
                 <span>·</span>
                 <span className="capitalize">{t.payment_method}</span>
               </>
@@ -497,7 +519,7 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
       <div className="flex items-center gap-2 shrink-0">
         <div className={cn(
           "font-mono tabular font-bold text-sm mr-2",
-          t.type === "income" ? "text-income" : t.type === "expense" ? "text-expense" : "text-muted-foreground"
+          t.type === "income" ? "text-income" : isCredit ? "text-orange-500" : "text-expense"
         )}>
           {t.type === "income" ? "+" : t.type === "expense" ? "-" : ""}{formatBRL(Number(t.amount))}
         </div>
