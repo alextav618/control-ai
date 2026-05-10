@@ -35,33 +35,36 @@ function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
 
+  // Estados de Modais
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
 
   const [editPayInv, setEditPayInv] = useState<any>(null);
   const [editPayAccount, setEditPayAccount] = useState("");
-  const [editPayDate, setEditPayDate] = useState(localDateString());
+  const [editPayDate, setEditPayDate] = useState("");
   const [editPayDialog, setEditPayDialog] = useState(false);
 
   const [itemDialog, setItemDialog] = useState(false);
+  const [targetInvoiceForItem, setTargetInvoiceForItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
   const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
 
+  // Queries
   const { data: invoices = [], isLoading: invLoading } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("invoices")
-        .select("*, accounts!inner(name, type, archived)")
+        .select("*, accounts!inner(name, type, archived, current_balance)")
         .eq("accounts.archived", false)
         .gt("total_amount", 0)
         .order("reference_year", { ascending: true })
         .order("reference_month", { ascending: true });
-      if (error) { console.error('Erro Supabase (fetch invoices):', error); throw error; }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -71,7 +74,7 @@ function InvoicesPage() {
     queryKey: ["accounts", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("accounts").select("*").eq("archived", false);
-      if (error) console.error('Erro Supabase (fetch accounts):', error);
+      if (error) throw error;
       return data ?? [];
     },
     enabled: !!user,
@@ -84,7 +87,7 @@ function InvoicesPage() {
         .from("invoice_initial_balances")
         .select("*, invoices(reference_month, reference_year, accounts(name))")
         .order("created_at", { ascending: false });
-      if (error) { console.error('Erro Supabase (fetch initial balances):', error); throw error; }
+      if (error) throw error;
       return data;
     },
     enabled: !!user,
@@ -92,15 +95,17 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
+  // Ações
   const triggerRecompute = async (invoiceId: string) => {
-    const { error } = await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
-    if (error) console.error('Erro Supabase (rpc recompute):', error);
+    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
+    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
   };
 
   const confirmPay = async () => {
     if (!user || !payInv || !payAccount) return;
+    
     const { error: txErr } = await supabase.from("transactions").insert({
       user_id: user.id,
       type: "transfer",
@@ -112,9 +117,14 @@ function InvoicesPage() {
       status: "paid",
       source: "manual",
     });
+
     if (txErr) { toast.error(txErr.message); return; }
-    const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
-    if (invErr) { toast.error(invErr.message); return; }
+
+    await supabase.from("invoices").update({ 
+      status: "paid", 
+      paid_at: new Date(payDate + "T12:00:00").toISOString() 
+    }).eq("id", payInv.id);
+
     toast.success("Fatura paga ✓");
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -124,140 +134,34 @@ function InvoicesPage() {
 
   const deletePayment = async (inv: any) => {
     if (!confirm(`Desfazer pagamento da fatura ${inv.accounts?.name} (${monthNames[inv.reference_month - 1]}/${inv.reference_year})?`)) return;
-    const { data: paymentTx } = await supabase
-      .from("transactions")
-      .select("id")
-      .eq("to_account_id", inv.account_id)
-      .eq("type", "transfer")
-      .ilike("description", `%Pagamento fatura ${inv.accounts?.name}%`)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (paymentTx) await supabase.from("transactions").delete().eq("id", paymentTx.id);
-    await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", inv.id);
-    toast.success("Pagamento desfeito — fatura reaberta");
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
 
-  const openEditPayment = (inv: any) => {
-    setEditPayInv(inv);
-    setEditPayAccount(cashAccounts[0]?.id ?? "");
-    setEditPayDate(inv.paid_at ? inv.paid_at.slice(0, 10) : localDateString());
-  };
-
-  const confirmEditPayment = async () => {
-    if (!user || !editPayInv || !editPayAccount) return;
-    const { data: paymentTx } = await supabase
-      .from("transactions")
-      .select("id")
-      .eq("to_account_id", editPayInv.account_id)
-      .eq("type", "transfer")
-      .ilike("description", `%Pagamento fatura ${editPayInv.accounts?.name}%`)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (paymentTx) await supabase.from("transactions").delete().eq("id", paymentTx.id);
-    const { error: txErr } = await supabase.from("transactions").insert({
-      user_id: user.id,
-      type: "transfer",
-      amount: Number(editPayInv.total_amount),
-      description: `Pagamento fatura ${editPayInv.accounts?.name} (${monthNames[editPayInv.reference_month - 1]}/${editPayInv.reference_year})`,
-      occurred_on: editPayDate,
-      account_id: editPayAccount,
-      to_account_id: editPayInv.account_id,
-      status: "paid",
-      source: "manual",
-    });
-    if (txErr) { toast.error(txErr.message); return; }
-    await supabase.from("invoices").update({ paid_at: new Date(editPayDate + "T12:00:00").toISOString() }).eq("id", editPayInv.id);
-    toast.success("Pagamento atualizado ✓");
-    setEditPayInv(null);
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
-
-  const saveItem = async () => {
-    if (!user || !payInv || !itemForm.description || !itemForm.unit_price) return;
-    const qty = Number(itemForm.quantity) || 1;
-    const unit = Number(itemForm.unit_price) || 0;
-    const { error } = await supabase.from("invoice_items").insert({
-      user_id: user.id,
-      invoice_id: payInv.id,
-      description: itemForm.description,
-      quantity: qty,
-      unit_price: unit,
-      amount: qty * unit,
-    });
-    if (error) { toast.error(error.message); return; }
-    await triggerRecompute(payInv.id);
-    toast.success("Item adicionado");
-    setItemDialog(false);
-  };
-
-  const openEditAdj = (adj: any) => {
-    setEditingAdj(adj);
-    setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) });
-    setAdjDialog(true);
-  };
-
-  const saveAdjustment = async () => {
-    if (!user || !adjForm.invoice_id || !adjForm.amount) return;
-    const amountNum = Number(adjForm.amount);
-    const inv = invoices.find((i: any) => i.id === adjForm.invoice_id);
-    const payload: any = {
-      user_id: user.id,
-      invoice_id: adjForm.invoice_id,
-      amount: amountNum,
-      month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual",
-    };
-    if (editingAdj) payload.id = editingAdj.id;
-    const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
-    if (error) { toast.error(error.message); return; }
-    await triggerRecompute(adjForm.invoice_id);
-    toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
-    setAdjDialog(false);
-    setEditingAdj(null);
-    qc.invalidateQueries({ queryKey: ["initial_balances"] });
-  };
-
-  const deletePayment = async (inv: any) => {
-    if (!confirm(`Excluir o pagamento da fatura ${monthNames[inv.reference_month - 1]}/${inv.reference_year}? A fatura voltará para "Em aberto".`)) return;
-    // Busca a transação de pagamento dessa fatura
     const { data: payTx } = await supabase
       .from("transactions")
       .select("id")
       .eq("to_account_id", inv.account_id)
       .eq("type", "transfer")
-      .ilike("description", `%${monthNames[inv.reference_month - 1]}/${inv.reference_year}%`)
+      .eq("amount", inv.total_amount)
       .maybeSingle();
 
     if (payTx) {
       await supabase.from("transactions").delete().eq("id", payTx.id);
     }
 
-    const { error } = await supabase
-      .from("invoices")
-      .update({ status: "open", paid_at: null })
-      .eq("id", inv.id);
-
-    if (error) { toast.error(error.message); return; }
-    toast.success("Pagamento excluído — fatura reaberta");
+    await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", inv.id);
+    
+    toast.success("Pagamento desfeito — fatura reaberta");
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const openEditPayment = async (inv: any) => {
-    // Busca a transação de pagamento para pegar conta e data
     const { data: payTx } = await supabase
       .from("transactions")
       .select("id, account_id, occurred_on")
       .eq("to_account_id", inv.account_id)
       .eq("type", "transfer")
-      .ilike("description", `%${monthNames[inv.reference_month - 1]}/${inv.reference_year}%`)
+      .eq("amount", inv.total_amount)
       .maybeSingle();
 
     setEditPayInv({ ...inv, payTxId: payTx?.id });
@@ -275,11 +179,59 @@ function InvoicesPage() {
         .eq("id", editPayInv.payTxId);
       if (error) { toast.error(error.message); return; }
     }
+    
+    await supabase.from("invoices").update({ 
+      paid_at: new Date(editPayDate + "T12:00:00").toISOString() 
+    }).eq("id", editPayInv.id);
+
     toast.success("Pagamento atualizado!");
     setEditPayDialog(false);
     setEditPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
+  };
+
+  const saveItem = async () => {
+    if (!user || !targetInvoiceForItem || !itemForm.description || !itemForm.unit_price) return;
+    const qty = Number(itemForm.quantity) || 1;
+    const unit = Number(itemForm.unit_price) || 0;
+    
+    const { error } = await supabase.from("invoice_items").insert({
+      user_id: user.id,
+      invoice_id: targetInvoiceForItem.id,
+      description: itemForm.description,
+      quantity: qty,
+      unit_price: unit,
+      amount: qty * unit,
+    });
+
+    if (error) { toast.error(error.message); return; }
+    await triggerRecompute(targetInvoiceForItem.id);
+    toast.success("Item adicionado");
+    setItemDialog(false);
+    setTargetInvoiceForItem(null);
+  };
+
+  const saveAdjustment = async () => {
+    if (!user || !adjForm.invoice_id || !adjForm.amount) return;
+    const inv = invoices.find((i: any) => i.id === adjForm.invoice_id);
+    
+    const payload: any = {
+      user_id: user.id,
+      invoice_id: adjForm.invoice_id,
+      amount: Number(adjForm.amount),
+      month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual",
+    };
+    if (editingAdj) payload.id = editingAdj.id;
+
+    const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
+    if (error) { toast.error(error.message); return; }
+    
+    await triggerRecompute(adjForm.invoice_id);
+    toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
+    setAdjDialog(false);
+    setEditingAdj(null);
+    qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
   const deleteAdjustment = async (adj: any) => {
@@ -306,7 +258,7 @@ function InvoicesPage() {
         </Button>
       </div>
 
-      {/* FATURAS NÃO PAGAS */}
+      {/* SEÇÃO: EM ABERTO */}
       <section>
         <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto / Fechadas ({unpaidInvoices.length})
@@ -314,9 +266,7 @@ function InvoicesPage() {
         {invLoading ? (
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : unpaidInvoices.length === 0 ? (
-          <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">
-            Nenhuma fatura em aberto 🎉
-          </div>
+          <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">Nenhuma fatura pendente 🎉</div>
         ) : (
           <div className="space-y-4">
             {unpaidInvoices.map((inv: any, index: number) => (
@@ -325,14 +275,14 @@ function InvoicesPage() {
                 inv={inv}
                 isNext={index === 0}
                 onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
-                onAddItem={() => { setPayInv(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
+                onAddItem={() => { setTargetInvoiceForItem(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
               />
             ))}
           </div>
         )}
       </section>
 
-      {/* AJUSTES DE SALDO */}
+      {/* SEÇÃO: AJUSTES */}
       <section>
         <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
           <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
@@ -362,11 +312,9 @@ function InvoicesPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEditAdj(adj)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
-                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
-                        </div>
+                      <td className="px-4 py-3 text-right flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" onClick={() => { setEditingAdj(adj); setAdjForm({ invoice_id: adj.invoice_id, amount: String(adj.amount) }); setAdjDialog(true); }}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
                       </td>
                     </tr>
                   ))}
@@ -377,12 +325,10 @@ function InvoicesPage() {
         </div>
       </section>
 
-      {/* FATURAS PAGAS */}
+      {/* SEÇÃO: PAGAS */}
       {paidInvoices.length > 0 && (
         <section>
-          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">
-            Histórico de Pagas ({paidInvoices.length})
-          </h2>
+          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas ({paidInvoices.length})</h2>
           <div className="space-y-4">
             {paidInvoices.map((inv: any) => (
               <InvCard
@@ -396,13 +342,10 @@ function InvoicesPage() {
         </section>
       )}
 
-      {/* MODAL PAGAMENTO */}
-      <Dialog open={!!payInv && !itemDialog && !adjDialog} onOpenChange={(v) => !v && setPayInv(null)}>
+      {/* MODAL: PAGAR */}
+      <Dialog open={!!payInv} onOpenChange={(v) => !v && setPayInv(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Pagar fatura</DialogTitle>
-            <DialogDescription>Confirme o pagamento total desta fatura.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Pagar fatura</DialogTitle></DialogHeader>
           {payInv && (
             <div className="space-y-4">
               <div className="rounded-xl bg-surface-2 p-4 border border-border">
@@ -430,7 +373,7 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL ITEM EXTRA */}
+      {/* MODAL: ITEM EXTRA */}
       <Dialog open={itemDialog} onOpenChange={setItemDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Adicionar item extra</DialogTitle></DialogHeader>
@@ -445,13 +388,10 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL AJUSTE */}
+      {/* MODAL: AJUSTE */}
       <Dialog open={adjDialog} onOpenChange={(v) => { setAdjDialog(v); if (!v) setEditingAdj(null); }}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle>
-            <DialogDescription>O saldo inicial é somado ao total da fatura.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             {!editingAdj && (
               <div>
@@ -460,9 +400,7 @@ function InvoicesPage() {
                   <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione a fatura" /></SelectTrigger>
                   <SelectContent>
                     {invoices.map((inv: any) => (
-                      <SelectItem key={inv.id} value={inv.id}>
-                        {inv.accounts?.name} ({monthNames[inv.reference_month - 1]}/{inv.reference_year})
-                      </SelectItem>
+                      <SelectItem key={inv.id} value={inv.id}>{inv.accounts?.name} ({monthNames[inv.reference_month - 1]}/{inv.reference_year})</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -470,20 +408,17 @@ function InvoicesPage() {
             )}
             <div>
               <Label>Valor do Ajuste (R$)</Label>
-              <Input type="number" step="0.01" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="mt-1.5" placeholder="Ex: 150.00" />
+              <Input type="number" step="0.01" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="mt-1.5" />
             </div>
             <Button onClick={saveAdjustment} className="w-full">{editingAdj ? "Salvar Alterações" : "Criar Ajuste"}</Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* MODAL EDITAR PAGAMENTO */}
-      <Dialog open={!!editPayInv} onOpenChange={(v) => !v && setEditPayInv(null)}>
+      {/* MODAL: EDITAR PAGAMENTO */}
+      <Dialog open={editPayDialog} onOpenChange={setEditPayDialog}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar pagamento</DialogTitle>
-            <DialogDescription>Altere a conta ou data do pagamento desta fatura.</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Editar pagamento</DialogTitle></DialogHeader>
           {editPayInv && (
             <div className="space-y-4">
               <div className="rounded-xl bg-surface-2 p-4 border border-border">
@@ -565,30 +500,18 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
         </div>
 
         <div className="flex flex-col gap-2 shrink-0">
-          {onPay && !isPaid && (
-            <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>
-          )}
-          {isPaid && onEditPayment && (
-            <Button size="sm" variant="outline" onClick={onEditPayment} title="Editar pagamento">
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-          )}
-          {isPaid && onDeletePayment && (
-            <Button size="sm" variant="ghost" onClick={onDeletePayment} title="Desfazer pagamento">
-              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-            </Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
+          {!isPaid && onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>}
+          {isPaid && onEditPayment && <Button size="sm" variant="outline" onClick={onEditPayment}><Pencil className="h-3.5 w-3.5" /></Button>}
+          {isPaid && onDeletePayment && <Button size="sm" variant="ghost" onClick={onDeletePayment}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>}
+          <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</Button>
         </div>
       </div>
 
       {expanded && (
         <div className="border-t border-border bg-surface-2/30 p-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Detalhamento</h3>
-            {onAddItem && <Button size="xs" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
+            {onAddItem && <Button size="sm" variant="outline" onClick={onAddItem} className="h-7 text-[10px]"><Plus className="h-3 w-3 mr-1" />Item extra</Button>}
           </div>
           <div className="space-y-1">
             {details?.adjustment && (
@@ -599,26 +522,23 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
             )}
             {details?.transactions.map((t: any) => (
               <div key={t.id} className="flex items-center justify-between py-1.5 text-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-xs shrink-0 text-muted-foreground">{formatDateBR(t.occurred_on).slice(0, 5)}</span>
+                <div className="flex items-center gap-2 truncate">
+                  <span className="text-xs text-muted-foreground">{formatDateBR(t.occurred_on).slice(0, 5)}</span>
                   <span className="truncate">{t.description}</span>
                 </div>
-                <span className="font-mono tabular shrink-0">{formatBRL(Number(t.amount))}</span>
+                <span className="font-mono tabular">{formatBRL(Number(t.amount))}</span>
               </div>
             ))}
             {details?.items.map((it: any) => (
               <div key={it.id} className="flex items-center justify-between py-1.5 text-sm text-primary">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] px-1 rounded bg-primary/10 shrink-0">EXTRA</span>
+                <div className="flex items-center gap-2 truncate">
+                  <span className="text-[10px] px-1 rounded bg-primary/10">EXTRA</span>
                   <span className="truncate">{it.description} {it.quantity > 1 ? `(x${it.quantity})` : ""}</span>
                 </div>
-                <span className="font-mono tabular shrink-0">{formatBRL(Number(it.amount))}</span>
+                <span className="font-mono tabular">{formatBRL(Number(it.amount))}</span>
               </div>
             ))}
             {!details && <div className="text-center py-4 text-xs text-muted-foreground">Carregando...</div>}
-            {details && details.transactions.length === 0 && details.items.length === 0 && !details.adjustment && (
-              <div className="text-center py-4 text-xs text-muted-foreground">Nenhum item nesta fatura.</div>
-            )}
           </div>
         </div>
       )}
