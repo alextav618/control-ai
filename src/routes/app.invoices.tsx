@@ -19,23 +19,33 @@ export const Route = createFileRoute("/app/invoices")({
   component: InvoicesPage,
 });
 
+const STATUS_LABEL: Record<string, string> = {
+  open: "Em aberto",
+  closed: "Fechada",
+  paid: "Paga",
+};
+
+const STATUS_COLOR: Record<string, string> = {
+  open: "text-audit-yellow border-audit-yellow/30 bg-audit-yellow/10",
+  closed: "text-primary border-primary/30 bg-primary/10",
+  paid: "text-income border-income/30 bg-income/10",
+};
+
 function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
-  
-  // Modals state
+
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
-  
+
   const [itemDialog, setItemDialog] = useState(false);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
-  
+
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
   const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
 
-  // Queries
   const { data: invoices = [], isLoading: invLoading } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
@@ -43,8 +53,9 @@ function InvoicesPage() {
         .from("invoices")
         .select("*, accounts!inner(name, type, archived)")
         .eq("accounts.archived", false)
-        .order("reference_year", { ascending: false })
-        .order("reference_month", { ascending: false });
+        .gt("total_amount", 0) // só faturas com valor acima de 0
+        .order("reference_year", { ascending: true })
+        .order("reference_month", { ascending: true });
       if (error) {
         console.error('Erro Supabase (fetch invoices):', error);
         throw error;
@@ -82,7 +93,6 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
-  // Actions
   const triggerRecompute = async (invoiceId: string) => {
     const { error } = await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
     if (error) console.error('Erro Supabase (rpc recompute):', error);
@@ -105,18 +115,10 @@ function InvoicesPage() {
       status: "paid",
       source: "manual",
     });
-    if (txErr) { 
-      console.error('Erro Supabase (pay tx insert):', txErr);
-      toast.error(txErr.message); 
-      return; 
-    }
+    if (txErr) { toast.error(txErr.message); return; }
 
     const { error: invErr } = await supabase.from("invoices").update({ status: "paid", paid_at: new Date().toISOString() }).eq("id", payInv.id);
-    if (invErr) { 
-      console.error('Erro Supabase (pay invoice update):', invErr);
-      toast.error(invErr.message); 
-      return; 
-    }
+    if (invErr) { toast.error(invErr.message); return; }
 
     toast.success("Fatura paga ✓");
     setPayInv(null);
@@ -137,11 +139,7 @@ function InvoicesPage() {
       unit_price: unit,
       amount: qty * unit,
     });
-    if (error) { 
-      console.error('Erro Supabase (save invoice item):', error);
-      toast.error(error.message); 
-      return; 
-    }
+    if (error) { toast.error(error.message); return; }
     await triggerRecompute(payInv.id);
     toast.success("Item adicionado");
     setItemDialog(false);
@@ -155,27 +153,17 @@ function InvoicesPage() {
 
   const saveAdjustment = async () => {
     if (!user || !adjForm.invoice_id || !adjForm.amount) return;
-    
     const amountNum = Number(adjForm.amount);
     const inv = invoices.find(i => i.id === adjForm.invoice_id);
-    
     const payload: any = {
       user_id: user.id,
       invoice_id: adjForm.invoice_id,
       amount: amountNum,
       month_year: inv ? `${inv.reference_month}/${inv.reference_year}` : "manual"
     };
-
     if (editingAdj) payload.id = editingAdj.id;
-
     const { error } = await supabase.from("invoice_initial_balances").upsert(payload);
-    
-    if (error) { 
-      console.error('Erro Supabase (save adjustment):', error);
-      toast.error(error.message); 
-      return; 
-    }
-    
+    if (error) { toast.error(error.message); return; }
     await triggerRecompute(adjForm.invoice_id);
     toast.success(editingAdj ? "Ajuste atualizado" : "Ajuste criado");
     setAdjDialog(false);
@@ -184,21 +172,20 @@ function InvoicesPage() {
   };
 
   const deleteAdjustment = async (adj: any) => {
-    if (!confirm("Excluir este ajuste de saldo inicial? O total da fatura será recalculado.")) return;
+    if (!confirm("Excluir este ajuste?")) return;
     const { error } = await supabase.from("invoice_initial_balances").delete().eq("id", adj.id);
-    if (error) { 
-      console.error('Erro Supabase (delete adjustment):', error);
-      toast.error(error.message); 
-      return; 
-    }
-    
+    if (error) { toast.error(error.message); return; }
     await triggerRecompute(adj.invoice_id);
     toast.success("Ajuste excluído");
     qc.invalidateQueries({ queryKey: ["initial_balances"] });
   };
 
-  const openInvoices = invoices.filter((i: any) => i.status !== "paid");
-  const paidInvoices = invoices.filter((i: any) => i.status === "paid");
+  // Ordena: não pagas primeiro (por vencimento), pagas depois
+  const unpaidInvoices = invoices.filter((i: any) => i.status !== "paid");
+  const paidInvoices = invoices.filter((i: any) => i.status === "paid").reverse(); // mais recente primeiro
+
+  // Próxima a pagar = primeira da lista de não pagas
+  const nextToPay = unpaidInvoices[0];
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300 space-y-10">
@@ -212,23 +199,24 @@ function InvoicesPage() {
         </Button>
       </div>
 
-      {/* FATURAS EM ABERTO */}
+      {/* FATURAS NÃO PAGAS */}
       <section>
         <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto ({openInvoices.length})
+          <AlertCircle className="h-4 w-4 text-audit-yellow" /> Em aberto / Fechadas ({unpaidInvoices.length})
         </h2>
         {invLoading ? (
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : openInvoices.length === 0 ? (
+        ) : unpaidInvoices.length === 0 ? (
           <div className="rounded-2xl border border-border bg-surface-1 p-10 text-center text-sm text-muted-foreground">
             Nenhuma fatura em aberto 🎉
           </div>
         ) : (
           <div className="space-y-4">
-            {openInvoices.map((inv: any) => (
+            {unpaidInvoices.map((inv: any, index: number) => (
               <InvCard
                 key={inv.id}
                 inv={inv}
+                isNext={index === 0}
                 onPay={() => { setPayInv(inv); setPayAccount(cashAccounts[0]?.id ?? ""); }}
                 onAddItem={() => { setPayInv(inv); setItemDialog(true); setItemForm({ description: "", quantity: "1", unit_price: "" }); }}
               />
@@ -237,7 +225,7 @@ function InvoicesPage() {
         )}
       </section>
 
-      {/* LISTAGEM DE AJUSTES */}
+      {/* AJUSTES DE SALDO */}
       <section>
         <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide flex items-center gap-2">
           <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
@@ -253,7 +241,7 @@ function InvoicesPage() {
                 <thead className="bg-surface-2/50 border-b border-border">
                   <tr>
                     <th className="px-4 py-3 font-semibold">Cartão / Mês</th>
-                    <th className="px-4 py-3 font-semibold">Valor do Ajuste</th>
+                    <th className="px-4 py-3 font-semibold">Valor</th>
                     <th className="px-4 py-3 font-semibold text-right">Ações</th>
                   </tr>
                 </thead>
@@ -269,12 +257,8 @@ function InvoicesPage() {
                       <td className="px-4 py-3 font-mono font-semibold">{formatBRL(Number(adj.amount))}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="icon" onClick={() => openEditAdj(adj)} title="Editar">
-                            <Pencil className="h-4 w-4 text-muted-foreground" />
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)} title="Excluir">
-                            <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                          </Button>
+                          <Button variant="ghost" size="icon" onClick={() => openEditAdj(adj)}><Pencil className="h-4 w-4 text-muted-foreground" /></Button>
+                          <Button variant="ghost" size="icon" onClick={() => deleteAdjustment(adj)}><Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" /></Button>
                         </div>
                       </td>
                     </tr>
@@ -289,9 +273,9 @@ function InvoicesPage() {
       {/* FATURAS PAGAS */}
       {paidInvoices.length > 0 && (
         <section>
-          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas</h2>
+          <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas ({paidInvoices.length})</h2>
           <div className="space-y-4">
-            {paidInvoices.slice(0, 6).map((inv: any) => (
+            {paidInvoices.map((inv: any) => (
               <InvCard key={inv.id} inv={inv} />
             ))}
           </div>
@@ -347,14 +331,12 @@ function InvoicesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* MODAL AJUSTE / SALDO INICIAL */}
-      <Dialog open={adjDialog} onOpenChange={(v) => { setAdjDialog(v); if(!v) setEditingAdj(null); }}>
+      {/* MODAL AJUSTE */}
+      <Dialog open={adjDialog} onOpenChange={(v) => { setAdjDialog(v); if (!v) setEditingAdj(null); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingAdj ? "Editar Ajuste" : "Novo Saldo Inicial"}</DialogTitle>
-            <DialogDescription>
-              O saldo inicial é somado ao total da fatura para ajustes manuais.
-            </DialogDescription>
+            <DialogDescription>O saldo inicial é somado ao total da fatura.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             {!editingAdj && (
@@ -374,18 +356,9 @@ function InvoicesPage() {
             )}
             <div>
               <Label>Valor do Ajuste (R$)</Label>
-              <Input 
-                type="number" 
-                step="0.01" 
-                value={adjForm.amount} 
-                onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} 
-                className="mt-1.5" 
-                placeholder="Ex: 150.00"
-              />
+              <Input type="number" step="0.01" value={adjForm.amount} onChange={(e) => setAdjForm({ ...adjForm, amount: e.target.value })} className="mt-1.5" placeholder="Ex: 150.00" />
             </div>
-            <Button onClick={saveAdjustment} className="w-full">
-              {editingAdj ? "Salvar Alterações" : "Criar Ajuste"}
-            </Button>
+            <Button onClick={saveAdjustment} className="w-full">{editingAdj ? "Salvar Alterações" : "Criar Ajuste"}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -393,7 +366,7 @@ function InvoicesPage() {
   );
 }
 
-function InvCard({ inv, onPay, onAddItem }: any) {
+function InvCard({ inv, isNext, onPay, onAddItem }: any) {
   const [expanded, setExpanded] = useState(false);
 
   const { data: details } = useQuery({
@@ -404,30 +377,62 @@ function InvCard({ inv, onPay, onAddItem }: any) {
         supabase.from("invoice_items").select("*").eq("invoice_id", inv.id),
         supabase.from("invoice_initial_balances").select("*").eq("invoice_id", inv.id).maybeSingle(),
       ]);
-      if (txR.error) console.error('Erro Supabase (fetch inv txs):', txR.error);
-      if (itemsR.error) console.error('Erro Supabase (fetch inv items):', itemsR.error);
-      if (adjR.error) console.error('Erro Supabase (fetch inv adj):', adjR.error);
-      
       return { transactions: txR.data ?? [], items: itemsR.data ?? [], adjustment: adjR.data };
     },
     enabled: expanded,
   });
 
+  const isPaid = inv.status === "paid";
+
   return (
-    <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden shadow-card">
+    <div className={cn(
+      "rounded-2xl border bg-surface-1 overflow-hidden shadow-card transition-all",
+      isNext ? "border-primary/40 shadow-[0_0_0_1px_hsl(var(--primary)/0.2)]" : "border-border"
+    )}>
+      {/* Badge próxima a pagar */}
+      {isNext && (
+        <div className="bg-primary/10 border-b border-primary/20 px-4 py-1.5 flex items-center gap-2">
+          <span className="text-[11px] font-semibold text-primary uppercase tracking-wider">⚡ Próxima a pagar</span>
+        </div>
+      )}
+
       <div className="p-4 flex items-start gap-4">
         <div className="h-10 w-10 rounded-lg bg-surface-2 flex items-center justify-center shrink-0">
           <CreditCard className="h-5 w-5 text-primary" />
         </div>
+
         <div className="flex-1 min-w-0">
-          <div className="font-display font-bold">{inv.accounts?.name}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">
-            {monthNames[inv.reference_month - 1]}/{inv.reference_year} · vence {formatDateBR(inv.due_date)}
+          {/* Cartão */}
+          <div className="font-display font-bold text-base">{inv.accounts?.name}</div>
+
+          {/* Mês em destaque */}
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className="text-lg font-bold text-foreground">
+              {monthNames[inv.reference_month - 1]}
+            </span>
+            <span className="text-sm text-muted-foreground font-medium">{inv.reference_year}</span>
+            <span className={cn("text-[11px] px-2 py-0.5 rounded-full border font-semibold", STATUS_COLOR[inv.status])}>
+              {STATUS_LABEL[inv.status]}
+            </span>
           </div>
-          <div className="mt-2 font-mono tabular text-xl font-bold">{formatBRL(Number(inv.total_amount))}</div>
+
+          <div className="text-xs text-muted-foreground mt-1">
+            vence {formatDateBR(inv.due_date)}
+            {inv.paid_at && <span className="ml-2">· pago em {formatDateBR(inv.paid_at.slice(0, 10))}</span>}
+          </div>
+
+          {/* Total */}
+          <div className="mt-2 font-mono tabular text-2xl font-bold">
+            {formatBRL(Number(inv.total_amount))}
+          </div>
         </div>
-        <div className="flex flex-col gap-2">
-          {onPay && <Button size="sm" onClick={onPay}><Check className="h-3.5 w-3.5 mr-1.5" />Pagar</Button>}
+
+        <div className="flex flex-col gap-2 shrink-0">
+          {onPay && !isPaid && (
+            <Button size="sm" onClick={onPay}>
+              <Check className="h-3.5 w-3.5 mr-1.5" />Pagar
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </Button>
