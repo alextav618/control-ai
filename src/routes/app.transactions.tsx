@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { addMonths, startOfMonth, endOfMonth, format } from "date-fns";
@@ -38,6 +39,7 @@ function TxPage() {
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [propagate, setPropagate] = useState(false);
+  const [activeFormTab, setActiveFormTab] = useState("common");
 
   const [form, setForm] = useState({
     type: "expense",
@@ -63,6 +65,7 @@ function TxPage() {
     });
     setEditId(null);
     setPropagate(false);
+    setActiveFormTab("common");
   };
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
@@ -96,6 +99,9 @@ function TxPage() {
     },
     enabled: !!user,
   });
+
+  const cashAccounts = useMemo(() => accounts.filter((a: any) => a.type !== "credit_card"), [accounts]);
+  const creditCardAccounts = useMemo(() => accounts.filter((a: any) => a.type === "credit_card"), [accounts]);
 
   const tx = useMemo(() => {
     const sMonth = startOfMonth(viewDate);
@@ -157,7 +163,6 @@ function TxPage() {
         const { error } = await supabase.from("transactions").update(payload).eq("id", editId);
         if (error) throw error;
 
-        // Lógica de Propagação para Parcelamentos
         const originalTx = rawTx.find(t => t.id === editId);
         if (originalTx?.installment_plan_id && originalTx.installment_number === 1 && propagate) {
           const { error: propErr } = await supabase
@@ -209,6 +214,9 @@ function TxPage() {
   };
 
   const editTx = (t: any) => {
+    const account = accounts.find((a: any) => a.id === t.account_id);
+    const isCreditCard = account?.type === "credit_card";
+    
     setForm({
       type: t.type,
       description: t.description,
@@ -220,11 +228,21 @@ function TxPage() {
       payment_method: t.payment_method || "debito",
     });
     setEditId(t.id);
+    setActiveFormTab(isCreditCard ? "credit" : "common");
     setOpen(true);
   };
 
   const currentEditingTx = rawTx.find(t => t.id === editId);
   const canPropagate = currentEditingTx?.installment_plan_id && currentEditingTx?.installment_number === 1;
+
+  const handleTabChange = (val: string) => {
+    setActiveFormTab(val);
+    setForm(prev => ({ 
+      ...prev, 
+      account_id: "", 
+      type: val === "credit" ? "expense" : "expense" 
+    }));
+  };
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -252,93 +270,118 @@ function TxPage() {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle>
-              <DialogDescription>Preencha os detalhes da transação.</DialogDescription>
+              <DialogDescription>Escolha o destino do lançamento no topo.</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div>
-                <Label>Tipo</Label>
-                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
-                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="expense">Despesa</SelectItem>
-                    <SelectItem value="income">Receita</SelectItem>
-                    <SelectItem value="transfer">Transferência</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            
+            <Tabs value={activeFormTab} onValueChange={handleTabChange} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="common" className="flex items-center gap-2">
+                  <Wallet className="h-4 w-4" /> Dinheiro/Conta
+                </TabsTrigger>
+                <TabsTrigger value="credit" className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4" /> Cartão de Crédito
+                </TabsTrigger>
+              </TabsList>
 
-              <div>
-                <Label>Descrição</Label>
-                <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado" className="mt-1.5" />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-4 pt-2">
                 <div>
-                  <Label>Valor (R$)</Label>
-                  <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" />
+                  <Label>Tipo</Label>
+                  <Select 
+                    value={form.type} 
+                    onValueChange={(v) => setForm({ ...form, type: v })}
+                    disabled={activeFormTab === "credit" && !editId} // Trava em despesa para cartão no novo lançamento
+                  >
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="expense">Despesa</SelectItem>
+                      {activeFormTab === "common" && (
+                        <>
+                          <SelectItem value="income">Receita</SelectItem>
+                          <SelectItem value="transfer">Transferência</SelectItem>
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {activeFormTab === "credit" && (
+                    <p className="text-[10px] text-muted-foreground mt-1">Lançamentos em cartão são sempre registrados como despesa.</p>
+                  )}
                 </div>
+
                 <div>
-                  <Label>Data</Label>
-                  <Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" />
+                  <Label>Descrição</Label>
+                  <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado" className="mt-1.5" />
                 </div>
-              </div>
 
-              <div>
-                <Label>{form.type === "transfer" ? "Conta de Origem" : "Conta / Cartão"}</Label>
-                <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
-                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {accounts.map((a: any) => (
-                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Valor (R$)</Label>
+                    <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" />
+                  </div>
+                  <div>
+                    <Label>Data</Label>
+                    <Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" />
+                  </div>
+                </div>
 
-              {form.type === "transfer" && (
                 <div>
-                  <Label>Conta de Destino</Label>
-                  <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                  <Label>{activeFormTab === "credit" ? "Cartão Utilizado" : (form.type === "transfer" ? "Conta de Origem" : "Conta / Carteira")}</Label>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
                     <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                     <SelectContent>
-                      {accounts.map((a: any) => (
+                      {(activeFormTab === "common" ? cashAccounts : creditCardAccounts).map((a: any) => (
                         <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
-              )}
 
-              {form.type !== "transfer" && (
-                <div>
-                  <Label>Categoria</Label>
-                  <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
-                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                    <SelectContent>
-                      {cats.map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
+                {form.type === "transfer" && activeFormTab === "common" && (
+                  <div>
+                    <Label>Conta de Destino</Label>
+                    <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectContent>
+                        {cashAccounts.map((a: any) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
-              {canPropagate && (
-                <div className="flex items-center space-x-2 pt-2 bg-primary/5 p-3 rounded-lg border border-primary/20 animate-in fade-in duration-300">
-                  <Checkbox id="propagate" checked={propagate} onCheckedChange={(v) => setPropagate(!!v)} />
-                  <label htmlFor="propagate" className="text-xs font-medium leading-none cursor-pointer">
-                    Propagar alterações para todas as parcelas futuras?
-                  </label>
-                </div>
-              )}
+                {form.type !== "transfer" && (
+                  <div>
+                    <Label>Categoria</Label>
+                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectContent>
+                        {cats.map((c: any) => (
+                          <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
 
-              <DialogFooter className="pt-2">
-                <Button onClick={handleSave} disabled={submitting} className="w-full">
-                  {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  {editId ? "Salvar Alterações" : "Criar Lançamento"}
-                </Button>
-              </DialogFooter>
-            </div>
+                {canPropagate && (
+                  <div className="flex items-center space-x-2 pt-2 bg-primary/5 p-3 rounded-lg border border-primary/20 animate-in fade-in duration-300">
+                    <Checkbox id="propagate" checked={propagate} onCheckedChange={(v) => setPropagate(!!v)} />
+                    <label htmlFor="propagate" className="text-xs font-medium leading-none cursor-pointer">
+                      Propagar alterações para todas as parcelas futuras?
+                    </label>
+                  </div>
+                )}
+
+                <DialogFooter className="pt-2">
+                  <Button onClick={handleSave} disabled={submitting} className="w-full">
+                    {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                    {editId ? "Salvar Alterações" : "Criar Lançamento"}
+                  </Button>
+                </DialogFooter>
+              </div>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>
