@@ -3,19 +3,20 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, formatDateBR, localDateString, monthNames } from "@/lib/format";
+import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
 import { 
   Trash2, Plus, Pencil, Search, ArrowRightLeft, ShieldCheck, 
   AlertTriangle, AlertCircle, Info, CreditCard, Wallet,
   ChevronLeft, ChevronRight, Calendar as CalendarIcon,
-  Loader2
+  Loader2, Link as LinkIcon
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { addMonths, startOfMonth, endOfMonth, format } from "date-fns";
@@ -33,8 +34,10 @@ function TxPage() {
   
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
+  const [propagate, setPropagate] = useState(false);
 
   const [form, setForm] = useState({
     type: "expense",
@@ -59,6 +62,7 @@ function TxPage() {
       payment_method: "debito"
     });
     setEditId(null);
+    setPropagate(false);
   };
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
@@ -129,6 +133,66 @@ function TxPage() {
     return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
   }, [tx]);
 
+  const handleSave = async () => {
+    if (!user || !form.description || !form.amount || !form.account_id) {
+      toast.error("Preencha os campos obrigatórios");
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const payload: any = {
+        user_id: user.id,
+        type: form.type,
+        description: form.description,
+        amount: Number(form.amount),
+        occurred_on: form.occurred_on,
+        account_id: form.account_id,
+        to_account_id: form.type === "transfer" ? form.to_account_id : null,
+        category_id: form.category_id || null,
+        payment_method: form.payment_method,
+      };
+
+      if (editId) {
+        const { error } = await supabase.from("transactions").update(payload).eq("id", editId);
+        if (error) throw error;
+
+        // Lógica de Propagação para Parcelamentos
+        const originalTx = rawTx.find(t => t.id === editId);
+        if (originalTx?.installment_plan_id && originalTx.installment_number === 1 && propagate) {
+          const { error: propErr } = await supabase
+            .from("transactions")
+            .update({
+              description: form.description,
+              amount: Number(form.amount),
+              category_id: form.category_id || null,
+            })
+            .eq("installment_plan_id", originalTx.installment_plan_id)
+            .gt("installment_number", 1);
+          
+          if (propErr) throw propErr;
+          toast.success("Lançamento e parcelas futuras atualizados!");
+        } else {
+          toast.success("Lançamento atualizado!");
+        }
+      } else {
+        const { error } = await supabase.from("transactions").insert(payload);
+        if (error) throw error;
+        toast.success("Lançamento criado!");
+      }
+
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const prevMonth = () => setViewDate(addMonths(viewDate, -1));
   const nextMonth = () => setViewDate(addMonths(viewDate, 1));
   const goToToday = () => setViewDate(new Date(2026, 4, 10));
@@ -159,6 +223,9 @@ function TxPage() {
     setOpen(true);
   };
 
+  const currentEditingTx = rawTx.find(t => t.id === editId);
+  const canPropagate = currentEditingTx?.installment_plan_id && currentEditingTx?.installment_number === 1;
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
@@ -187,7 +254,91 @@ function TxPage() {
               <DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle>
               <DialogDescription>Preencha os detalhes da transação.</DialogDescription>
             </DialogHeader>
-            <div className="py-4">Clique em Salvar para registrar no mês de {format(viewDate, "MMMM", { locale: ptBR })}.</div>
+            <div className="space-y-4 pt-4">
+              <div>
+                <Label>Tipo</Label>
+                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="expense">Despesa</SelectItem>
+                    <SelectItem value="income">Receita</SelectItem>
+                    <SelectItem value="transfer">Transferência</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label>Descrição</Label>
+                <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Mercado" className="mt-1.5" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Valor (R$)</Label>
+                  <Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} className="mt-1.5" />
+                </div>
+                <div>
+                  <Label>Data</Label>
+                  <Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" />
+                </div>
+              </div>
+
+              <div>
+                <Label>{form.type === "transfer" ? "Conta de Origem" : "Conta / Cartão"}</Label>
+                <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {accounts.map((a: any) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {form.type === "transfer" && (
+                <div>
+                  <Label>Conta de Destino</Label>
+                  <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {accounts.map((a: any) => (
+                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {form.type !== "transfer" && (
+                <div>
+                  <Label>Categoria</Label>
+                  <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                    <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                    <SelectContent>
+                      {cats.map((c: any) => (
+                        <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {canPropagate && (
+                <div className="flex items-center space-x-2 pt-2 bg-primary/5 p-3 rounded-lg border border-primary/20 animate-in fade-in duration-300">
+                  <Checkbox id="propagate" checked={propagate} onCheckedChange={(v) => setPropagate(!!v)} />
+                  <label htmlFor="propagate" className="text-xs font-medium leading-none cursor-pointer">
+                    Propagar alterações para todas as parcelas futuras?
+                  </label>
+                </div>
+              )}
+
+              <DialogFooter className="pt-2">
+                <Button onClick={handleSave} disabled={submitting} className="w-full">
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                  {editId ? "Salvar Alterações" : "Criar Lançamento"}
+                </Button>
+              </DialogFooter>
+            </div>
           </DialogContent>
         </Dialog>
       </div>
@@ -262,6 +413,7 @@ function SummaryCard({ label, value, type }: { label: string; value: number; typ
 function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onDelete: () => void; onEdit: () => void }) {
   const isTransfer = t.type === "transfer";
   const toAccount = isTransfer ? accounts.find((a: any) => a.id === t.to_account_id) : null;
+  const isLinked = !!t.installment_plan_id;
 
   return (
     <div className="p-4 flex items-center gap-3 hover:bg-surface-2/50 transition-colors group">
@@ -272,6 +424,7 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-display font-semibold truncate text-sm">{t.description}</span>
+            {isLinked && <LinkIcon className="h-3 w-3 text-primary shrink-0" title="Parte de um parcelamento" />}
             {t.audit_level && <AuditIndicator level={t.audit_level} reason={t.audit_reason} />}
             {t.invoice_id && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-bold border border-primary/20 shrink-0">FATURA</span>}
           </div>
