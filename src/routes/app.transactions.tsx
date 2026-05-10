@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
-import { Trash2, Plus, Pencil, Search, Filter, X, RefreshCw, TrendingUp, TrendingDown, Calculator, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet, Landmark, Coins, Banknote, ArrowRightLeft } from "lucide-react";
+import { Trash2, Plus, Pencil, Search, ArrowRightLeft, ShieldCheck, AlertTriangle, AlertCircle, Info, CreditCard, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,6 @@ const PAYMENT_METHODS = [
   { value: "transferencia", label: "Transferência" },
   { value: "boleto", label: "Boleto" },
   { value: "debito", label: "Débito" },
-  // { value: "credito", label: "Crédito" }, // Removido para evitar redundância com a aba de cartões
   { value: "dinheiro", label: "Dinheiro" },
   { value: "saque", label: "Saque" },
   { value: "deposito", label: "Depósito" },
@@ -58,7 +57,12 @@ function invoiceWindow(purchase: Date, closingDay: number, dueDay: number) {
   let dueMonth = refMonth;
   if (dueDay <= closingDay) { dueMonth += 1; if (dueMonth > 12) { dueMonth = 1; dueYear += 1; } }
   const dueDate = new Date(dueYear, dueMonth - 1, Math.min(dueDay, 28));
-  return { referenceMonth: refMonth, referenceYear: refYear, closingDate: localDateString(closingDate), dueDate: localDateString(dueDate) };
+  return {
+    referenceMonth: refMonth,
+    referenceYear: refYear,
+    closingDate: localDateString(closingDate),
+    dueDate: localDateString(dueDate),
+  };
 }
 
 const recomputeInvoiceTotal = async (invoiceId: string) => {
@@ -76,6 +80,7 @@ function TxPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [editInvoiceId, setEditInvoiceId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState("all");
@@ -98,6 +103,7 @@ function TxPage() {
   const resetForm = () => {
     setForm({ type: "expense", description: "", amount: "", occurred_on: todayLocal(), account_id: "", to_account_id: "", category_id: "", payment_method: "debito", installments: "1" });
     setEditId(null);
+    setEditInvoiceId(null);
     setActiveFormTab("common");
   };
 
@@ -163,11 +169,31 @@ function TxPage() {
     return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
   }, [filteredTx]);
 
+  // Busca ou cria a fatura do mês correto para o cartão selecionado
   const ensureInvoice = async (account: any, purchaseDate: Date) => {
     const w = invoiceWindow(purchaseDate, account.closing_day ?? 1, account.due_day ?? 10);
-    const { data: existing } = await supabase.from("invoices").select("*").eq("account_id", account.id).eq("reference_month", w.referenceMonth).eq("reference_year", w.referenceYear).maybeSingle();
+    const { data: existing } = await supabase
+      .from("invoices")
+      .select("*")
+      .eq("account_id", account.id) // <-- garante fatura separada por cartão
+      .eq("reference_month", w.referenceMonth)
+      .eq("reference_year", w.referenceYear)
+      .maybeSingle();
     if (existing) return existing;
-    const { data: created } = await supabase.from("invoices").insert({ user_id: user!.id, account_id: account.id, reference_month: w.referenceMonth, reference_year: w.referenceYear, closing_date: w.closingDate, due_date: w.dueDate, status: "open", total_amount: 0 }).select().single();
+    const { data: created } = await supabase
+      .from("invoices")
+      .insert({
+        user_id: user!.id,
+        account_id: account.id,
+        reference_month: w.referenceMonth,
+        reference_year: w.referenceYear,
+        closing_date: w.closingDate,
+        due_date: w.dueDate,
+        status: "open",
+        total_amount: 0,
+      })
+      .select()
+      .single();
     return created;
   };
 
@@ -178,6 +204,8 @@ function TxPage() {
       const amountNum = Number(form.amount);
       const occurredDate = new Date(form.occurred_on + "T12:00:00");
       const account = accounts.find((a: any) => a.id === form.account_id);
+
+      // CORREÇÃO: detecta cartão independente da aba ativa
       const isCard = account?.type === "credit_card";
 
       if (form.type === "transfer") {
@@ -191,7 +219,7 @@ function TxPage() {
           to_account_id: form.to_account_id,
           payment_method: "transferencia",
           status: "paid" as const,
-          source: "manual"
+          source: "manual",
         };
         if (editId) {
           const { error } = await supabase.from('transactions').update(row).eq('id', editId);
@@ -204,45 +232,111 @@ function TxPage() {
         const installments = Math.max(1, Number(form.installments) || 1);
         const installmentAmount = +(amountNum / installments).toFixed(2);
         let planId: string | null = null;
-        if (installments > 1) {
-          const { data: plan, error: pErr } = await supabase.from("installment_plans").insert({ user_id: user.id, description: form.description, total_amount: amountNum, installment_amount: installmentAmount, total_installments: installments, account_id: account.id, category_id: form.category_id || null, start_date: form.occurred_on }).select().single();
+
+        if (installments > 1 && !editId) {
+          const { data: plan, error: pErr } = await supabase
+            .from("installment_plans")
+            .insert({
+              user_id: user.id,
+              description: form.description,
+              total_amount: amountNum,
+              installment_amount: installmentAmount,
+              total_installments: installments,
+              account_id: account.id,
+              category_id: form.category_id || null,
+              start_date: form.occurred_on,
+            })
+            .select()
+            .single();
           if (pErr) throw pErr;
           planId = plan.id;
         }
-        const rows: any[] = [];
-        for (let i = 0; i < installments; i++) {
-          const instDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
-          const occurred = localDateString(instDate);
-          let invoiceId: string | null = null;
-          if (isCard && form.payment_method === "credito") {
-            const inv = await ensureInvoice(account, instDate);
-            invoiceId = inv?.id ?? null;
-          }
-          rows.push({ user_id: user.id, type: form.type, description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description, amount: installmentAmount, occurred_on: occurred, account_id: account.id, category_id: form.category_id || null, payment_method: form.payment_method, installment_plan_id: planId, installment_number: installments > 1 ? i + 1 : null, invoice_id: invoiceId, status: "paid", source: "manual" });
-        }
+
         if (editId) {
-          // Edição: atualiza apenas o primeiro registro
-          const { error } = await supabase.from('transactions').update(rows[0]).eq('id', editId);
+          // EDIÇÃO: atualiza a transação e recomputa faturas antigas e novas
+          let newInvoiceId: string | null = null;
+          if (isCard) {
+            const inv = await ensureInvoice(account, occurredDate);
+            newInvoiceId = inv?.id ?? null;
+          }
+
+          const row: any = {
+            type: form.type,
+            description: form.description,
+            amount: installmentAmount,
+            occurred_on: form.occurred_on,
+            account_id: account.id,
+            category_id: form.category_id || null,
+            payment_method: isCard ? "credito" : form.payment_method,
+            invoice_id: newInvoiceId,
+            source: "manual",
+          };
+
+          const { error } = await supabase.from('transactions').update(row).eq('id', editId);
           if (error) throw error;
+
+          // Recomputa fatura antiga (se tinha) e nova (se mudou)
+          const invoicesToRecompute = new Set<string>();
+          if (editInvoiceId) invoicesToRecompute.add(editInvoiceId);
+          if (newInvoiceId) invoicesToRecompute.add(newInvoiceId);
+          for (const id of invoicesToRecompute) await recomputeInvoiceTotal(id);
+
         } else {
+          // CRIAÇÃO: cria todas as parcelas com suas faturas corretas
+          const rows: any[] = [];
+          for (let i = 0; i < installments; i++) {
+            const instDate = new Date(occurredDate.getFullYear(), occurredDate.getMonth() + i, occurredDate.getDate());
+            const occurred = localDateString(instDate);
+            let invoiceId: string | null = null;
+
+            // CORREÇÃO: cria fatura se for cartão de crédito, independente da aba
+            if (isCard) {
+              const inv = await ensureInvoice(account, instDate);
+              invoiceId = inv?.id ?? null;
+            }
+
+            rows.push({
+              user_id: user.id,
+              type: form.type,
+              description: installments > 1 ? `${form.description} (${i + 1}/${installments})` : form.description,
+              amount: installmentAmount,
+              occurred_on: occurred,
+              account_id: account.id,
+              category_id: form.category_id || null,
+              payment_method: isCard ? "credito" : form.payment_method,
+              installment_plan_id: planId,
+              installment_number: installments > 1 ? i + 1 : null,
+              invoice_id: invoiceId,
+              status: "paid",
+              source: "manual",
+            });
+          }
+
           const { error } = await supabase.from('transactions').insert(rows);
           if (error) throw error;
+
+          // Recomputa todas as faturas afetadas
           const invIds = [...new Set(rows.map(r => r.invoice_id).filter(Boolean))];
           for (const id of invIds) await recomputeInvoiceTotal(id);
         }
       }
+
       setOpen(false);
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
-    } catch (e: any) { toast.error(e.message); }
-    finally { setSubmitting(false); }
+      toast.success(editId ? "Lançamento atualizado!" : "Lançamento criado!");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const removeTx = async (id: string) => {
     if (!confirm("Excluir este lançamento?")) return;
     try {
-      // Buscar a transação antes de excluir para ter o invoice_id
       const { data: txToDelete } = await supabase
         .from("transactions")
         .select("id, invoice_id")
@@ -250,7 +344,7 @@ function TxPage() {
         .maybeSingle();
 
       if (!txToDelete) {
-        toast.error("Lançamento não encontrado. Ele pode já ter sido excluído.");
+        toast.error("Lançamento não encontrado.");
         qc.invalidateQueries({ queryKey: ["transactions"] });
         return;
       }
@@ -260,34 +354,26 @@ function TxPage() {
         .delete({ count: "exact" })
         .eq("id", id);
 
-      if (error) {
-        console.error("Erro ao excluir lançamento:", error);
-        toast.error(`Erro ao excluir: ${error.message}`);
-        return;
-      }
+      if (error) { toast.error(`Erro ao excluir: ${error.message}`); return; }
+      if (count === 0) { toast.error("Não foi possível excluir. Verifique suas permissões."); return; }
 
-      if (count === 0) {
-        toast.error("Não foi possível excluir. Verifique suas permissões.");
-        return;
-      }
-
-      // Recomputar total da fatura, se houver
       if (txToDelete.invoice_id) {
         await recomputeInvoiceTotal(txToDelete.invoice_id);
       }
 
-      toast.success("Lançamento excluído com sucesso!");
+      toast.success("Lançamento excluído!");
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     } catch (e: any) {
-      console.error("Erro inesperado ao excluir:", e);
       toast.error(`Erro inesperado: ${e.message}`);
     }
   };
 
   const editTx = (t: any) => {
+    const account = accounts.find((a: any) => a.id === t.account_id);
+    const isCard = account?.type === "credit_card";
     setForm({
       type: t.type,
       description: t.description,
@@ -300,23 +386,25 @@ function TxPage() {
       installments: "1",
     });
     setEditId(t.id);
-    setActiveFormTab(t.type === "credit_card" ? "credit" : "common");
+    setEditInvoiceId(t.invoice_id || null); // guarda fatura antiga para recomputar
+    setActiveFormTab(isCard ? "credit" : "common");
     setOpen(true);
   };
 
-  const cashAccounts = accounts.filter(a => a.type !== "credit_card");
-  const creditCards = accounts.filter(a => a.type === "credit_card");
+  const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
+  const creditCards = accounts.filter((a: any) => a.type === "credit_card");
 
   const filteredPaymentMethods = useMemo(() => {
-    if (form.type === "transfer") {
-      return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
-    }
-    if (form.type === "income") {
-      return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value)); // Adicionado Dinheiro para Receita
-    }
-    // Para despesas, inclui todas as opções, incluindo Dinheiro
-    return PAYMENT_METHODS.filter(m => m.value !== "deposito"); // Remove depósito das despesas
+    if (form.type === "transfer") return PAYMENT_METHODS.filter(m => ["pix", "transferencia"].includes(m.value));
+    if (form.type === "income") return PAYMENT_METHODS.filter(m => ["pix", "transferencia", "deposito", "dinheiro"].includes(m.value));
+    return PAYMENT_METHODS.filter(m => m.value !== "deposito");
   }, [form.type]);
+
+  // Detecta se a conta selecionada na aba common é cartão de crédito
+  const selectedAccountIsCard = useMemo(() => {
+    const account = accounts.find((a: any) => a.id === form.account_id);
+    return account?.type === "credit_card";
+  }, [form.account_id, accounts]);
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
@@ -326,16 +414,16 @@ function TxPage() {
           <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Novo</Button></DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Novo lançamento</DialogTitle>
+              <DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle>
               <DialogDescription>Escolha o tipo de lançamento para continuar.</DialogDescription>
             </DialogHeader>
 
             <Tabs value={activeFormTab} onValueChange={(v) => {
               setActiveFormTab(v);
               if (v === "credit") {
-                setForm({ ...form, type: "expense", payment_method: "credito", account_id: creditCards[0]?.id || "" });
+                setForm(f => ({ ...f, type: "expense", payment_method: "credito", account_id: creditCards[0]?.id || "" }));
               } else {
-                setForm({ ...form, payment_method: "debito", account_id: cashAccounts[0]?.id || "" });
+                setForm(f => ({ ...f, payment_method: "debito", account_id: cashAccounts[0]?.id || "" }));
               }
             }} className="w-full">
               <TabsList className="grid w-full grid-cols-2 mb-4">
@@ -354,7 +442,7 @@ function TxPage() {
                       <Label>Tipo</Label>
                       <Select value={form.type} onValueChange={(v) => {
                         const newMethod = v === "income" ? "pix" : "debito";
-                        setForm({ ...form, type: v, payment_method: newMethod });
+                        setForm(f => ({ ...f, type: v, payment_method: newMethod }));
                       }}>
                         <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                         <SelectContent>
@@ -370,25 +458,25 @@ function TxPage() {
                       <div className="mt-2 text-sm font-medium text-expense">Despesa no Cartão</div>
                     </div>
                   )}
-                  <div><Label>Data</Label><Input type="date" value={form.occurred_on} onChange={(e) => setForm({ ...form, occurred_on: e.target.value })} className="mt-1.5" /></div>
+                  <div><Label>Data</Label><Input type="date" value={form.occurred_on} onChange={(e) => setForm(f => ({ ...f, occurred_on: e.target.value }))} className="mt-1.5" /></div>
                 </div>
 
-                <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: Almoço, Salário, Transferência..." className="mt-1.5" /></div>
+                <div><Label>Descrição</Label><Input value={form.description} onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Ex: Almoço, Salário, Transferência..." className="mt-1.5" /></div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0,00" className="mt-1.5" /></div>
+                  <div><Label>Valor</Label><Input type="number" step="0.01" value={form.amount} onChange={(e) => setForm(f => ({ ...f, amount: e.target.value }))} placeholder="0,00" className="mt-1.5" /></div>
                   {activeFormTab === "credit" && (
-                    <div><Label>Parcelas</Label><Input type="number" min={1} value={form.installments} onChange={(e) => setForm({ ...form, installments: e.target.value })} className="mt-1.5" /></div>
+                    <div><Label>Parcelas</Label><Input type="number" min={1} value={form.installments} onChange={(e) => setForm(f => ({ ...f, installments: e.target.value }))} className="mt-1.5" /></div>
                   )}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label>{activeFormTab === "credit" ? "Cartão" : "Conta"}</Label>
-                    <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                    <Select value={form.account_id} onValueChange={(v) => setForm(f => ({ ...f, account_id: v }))}>
                       <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                       <SelectContent>
-                        {(activeFormTab === "credit" ? creditCards : cashAccounts).map((a: any) => (
+                        {(activeFormTab === "credit" ? creditCards : accounts).map((a: any) => (
                           <SelectItem key={a.id} value={a.id}>
                             <div className="flex items-center gap-2">
                               <span>{a.icon || (a.type === 'credit_card' ? "💳" : "🏦")}</span>
@@ -399,13 +487,17 @@ function TxPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {/* Aviso quando seleciona cartão na aba common */}
+                    {activeFormTab === "common" && selectedAccountIsCard && (
+                      <p className="text-xs text-primary mt-1.5">💳 Será vinculado à fatura deste cartão automaticamente.</p>
+                    )}
                   </div>
                   <div>
                     <Label>Categoria</Label>
-                    <Select value={form.category_id} onValueChange={(v) => setForm({ ...form, category_id: v })}>
+                    <Select value={form.category_id} onValueChange={(v) => setForm(f => ({ ...f, category_id: v }))}>
                       <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                       <SelectContent>
-                        {cats.filter(c => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
+                        {cats.filter((c: any) => c.kind === (form.type === "income" ? "income" : "expense")).map((c: any) => (
                           <SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -415,24 +507,26 @@ function TxPage() {
 
                 {activeFormTab === "common" && (
                   <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <Label>Forma de Pagamento</Label>
-                      <Select value={form.payment_method} onValueChange={(v) => setForm({ ...form, payment_method: v })}>
-                        <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {filteredPaymentMethods.map((m) => (
-                            <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {!selectedAccountIsCard && (
+                      <div>
+                        <Label>Forma de Pagamento</Label>
+                        <Select value={form.payment_method} onValueChange={(v) => setForm(f => ({ ...f, payment_method: v }))}>
+                          <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {filteredPaymentMethods.map((m) => (
+                              <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
                     {form.type === "transfer" && (
                       <div>
                         <Label>Conta de Destino</Label>
-                        <Select value={form.to_account_id} onValueChange={(v) => setForm({ ...form, to_account_id: v })}>
+                        <Select value={form.to_account_id} onValueChange={(v) => setForm(f => ({ ...f, to_account_id: v }))}>
                           <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecione" /></SelectTrigger>
                           <SelectContent>
-                            {cashAccounts.filter(a => a.id !== form.account_id).map((a: any) => (
+                            {cashAccounts.filter((a: any) => a.id !== form.account_id).map((a: any) => (
                               <SelectItem key={a.id} value={a.id}>
                                 <div className="flex items-center gap-2">
                                   <span>{a.icon || "🏦"}</span>
@@ -449,7 +543,9 @@ function TxPage() {
                 )}
               </div>
 
-              <Button onClick={submit} disabled={submitting} className="w-full mt-4">{submitting ? "Salvando..." : editId ? "Salvar Alterações" : "Lançar"}</Button>
+              <Button onClick={submit} disabled={submitting} className="w-full mt-4">
+                {submitting ? "Salvando..." : editId ? "Salvar Alterações" : "Lançar"}
+              </Button>
             </Tabs>
           </DialogContent>
         </Dialog>
@@ -522,6 +618,7 @@ function TxRow({ t, accounts, onDelete, onEdit }: { t: any; accounts: any[]; onD
           <div className="flex items-center gap-2">
             <span className="font-medium truncate">{t.description}</span>
             {t.audit_level && <AuditIndicator level={t.audit_level} reason={t.audit_reason} />}
+            {t.invoice_id && <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">💳 Fatura</span>}
           </div>
           <div className="text-xs text-muted-foreground mt-0.5 flex gap-2 items-center flex-wrap">
             {isTransfer ? (
