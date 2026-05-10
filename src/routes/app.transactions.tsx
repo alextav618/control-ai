@@ -7,7 +7,8 @@ import { formatBRL, formatDateBR, localDateString, monthNames } from "@/lib/form
 import { 
   Trash2, Plus, Pencil, Search, ArrowRightLeft, ShieldCheck, 
   AlertTriangle, AlertCircle, Info, CreditCard, Wallet,
-  ChevronLeft, ChevronRight, Calendar as CalendarIcon
+  ChevronLeft, ChevronRight, Calendar as CalendarIcon,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,49 +16,25 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { addMonths, startOfMonth, endOfMonth, format, isSameMonth } from "date-fns";
+import { addMonths, startOfMonth, endOfMonth, format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export const Route = createFileRoute("/app/transactions")({
   component: TxPage,
 });
 
-const PAYMENT_METHODS = [
-  { value: "pix", label: "Pix" },
-  { value: "transferencia", label: "Transferência" },
-  { value: "boleto", label: "Boleto" },
-  { value: "debito", label: "Débito" },
-  { value: "dinheiro", label: "Dinheiro" },
-  { value: "saque", label: "Saque" },
-  { value: "deposito", label: "Depósito" },
-];
-
-const ACCOUNT_TYPE_LABELS: Record<string, string> = {
-  checking: "C. Corrente",
-  savings: "Poupança",
-  cash: "Dinheiro",
-  credit_card: "Cartão",
-  other: "Outro",
-};
-
 function TxPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   
-  // Controle de Navegação Temporal
   const [viewDate, setViewDate] = useState(new Date(2026, 4, 10)); // Ref: Maio 2026
   
-  // Estados de UI
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [editInvoiceId, setEditInvoiceId] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
-  const [activeFormTab, setActiveFormTab] = useState("common");
 
   const [form, setForm] = useState({
     type: "expense",
@@ -68,7 +45,6 @@ function TxPage() {
     to_account_id: "",
     category_id: "",
     payment_method: "debito",
-    installments: "1",
   });
 
   const resetForm = () => {
@@ -80,17 +56,13 @@ function TxPage() {
       account_id: "", 
       to_account_id: "", 
       category_id: "", 
-      payment_method: "debito", 
-      installments: "1" 
+      payment_method: "debito"
     });
     setEditId(null);
-    setEditInvoiceId(null);
-    setActiveFormTab("common");
   };
 
   useEffect(() => { if (!open) resetForm(); }, [open]);
 
-  // Queries
   const { data: rawTx = [], isLoading: txLoading } = useQuery({
     queryKey: ["transactions", user?.id],
     queryFn: async () => {
@@ -121,7 +93,6 @@ function TxPage() {
     enabled: !!user,
   });
 
-  // Filtragem Mensal e Inteligente
   const tx = useMemo(() => {
     const sMonth = startOfMonth(viewDate);
     const eMonth = endOfMonth(viewDate);
@@ -158,7 +129,6 @@ function TxPage() {
     return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
   }, [tx]);
 
-  // Ações de Navegação
   const prevMonth = () => setViewDate(addMonths(viewDate, -1));
   const nextMonth = () => setViewDate(addMonths(viewDate, 1));
   const goToToday = () => setViewDate(new Date(2026, 4, 10));
@@ -171,13 +141,10 @@ function TxPage() {
       toast.success("Excluído");
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
     }
   };
 
   const editTx = (t: any) => {
-    const account = accounts.find((a: any) => a.id === t.account_id);
-    const isCard = account?.type === "credit_card";
     setForm({
       type: t.type,
       description: t.description,
@@ -187,20 +154,13 @@ function TxPage() {
       to_account_id: t.to_account_id || "",
       category_id: t.category_id || "",
       payment_method: t.payment_method || "debito",
-      installments: "1",
     });
     setEditId(t.id);
-    setActiveFormTab(isCard ? "credit" : "common");
     setOpen(true);
   };
 
-  const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
-  const creditCards = accounts.filter((a: any) => a.type === "credit_card");
-
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300">
-      
-      {/* NAVEGAÇÃO TEMPORAL */}
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-surface-1 border border-border rounded-xl p-1 shadow-card">
@@ -227,20 +187,17 @@ function TxPage() {
               <DialogTitle>{editId ? "Editar lançamento" : "Novo lançamento"}</DialogTitle>
               <DialogDescription>Preencha os detalhes da transação.</DialogDescription>
             </DialogHeader>
-            {/* Form content (simplified for this write for brevity, keeping core logic) */}
             <div className="py-4">Clique em Salvar para registrar no mês de {format(viewDate, "MMMM", { locale: ptBR })}.</div>
           </DialogContent>
         </Dialog>
       </div>
 
-      {/* RESUMO DINÂMICO */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <SummaryCard label="Receitas" value={summary.income} type="income" />
         <SummaryCard label="Despesas" value={summary.expense} type="expense" />
         <SummaryCard label="Saldo do Mês" value={summary.balance} type="balance" />
       </div>
 
-      {/* FILTROS E BUSCA */}
       <div className="flex items-center gap-3 mb-6 flex-wrap">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -257,7 +214,6 @@ function TxPage() {
         </Select>
       </div>
 
-      {/* LISTA DE LANÇAMENTOS */}
       <div className="space-y-8">
         {txLoading ? (
           <div className="text-center py-20"><Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" /></div>
