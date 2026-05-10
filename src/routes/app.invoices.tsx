@@ -39,10 +39,6 @@ function InvoicesPage() {
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
 
-  const [editPayInv, setEditPayInv] = useState<any>(null);
-  const [editPayAccount, setEditPayAccount] = useState("");
-  const [editPayDate, setEditPayDate] = useState(localDateString());
-
   const [itemDialog, setItemDialog] = useState(false);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
@@ -131,80 +127,7 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
-  const deletePayment = async (inv: any) => {
-    if (!confirm(`Desfazer pagamento da fatura ${inv.accounts?.name} (${monthNames[inv.reference_month - 1]}/${inv.reference_year})?`)) return;
-
-    // Busca a transação de pagamento vinculada a essa fatura
-    const { data: paymentTx } = await supabase
-      .from("transactions")
-      .select("id")
-      .eq("to_account_id", inv.account_id)
-      .eq("type", "transfer")
-      .ilike("description", `%Pagamento fatura ${inv.accounts?.name}%`)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (paymentTx) {
-      await supabase.from("transactions").delete().eq("id", paymentTx.id);
-    }
-
-    await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", inv.id);
-    toast.success("Pagamento desfeito — fatura reaberta");
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
-
-  const openEditPayment = (inv: any) => {
-    setEditPayInv(inv);
-    setEditPayAccount(cashAccounts[0]?.id ?? "");
-    setEditPayDate(inv.paid_at ? inv.paid_at.slice(0, 10) : localDateString());
-  };
-
-  const confirmEditPayment = async () => {
-    if (!user || !editPayInv || !editPayAccount) return;
-
-    // Remove transação de pagamento antiga
-    const { data: paymentTx } = await supabase
-      .from("transactions")
-      .select("id")
-      .eq("to_account_id", editPayInv.account_id)
-      .eq("type", "transfer")
-      .ilike("description", `%Pagamento fatura ${editPayInv.accounts?.name}%`)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (paymentTx) {
-      await supabase.from("transactions").delete().eq("id", paymentTx.id);
-    }
-
-    // Cria nova transação de pagamento com dados atualizados
-    const { error: txErr } = await supabase.from("transactions").insert({
-      user_id: user.id,
-      type: "transfer",
-      amount: Number(editPayInv.total_amount),
-      description: `Pagamento fatura ${editPayInv.accounts?.name} (${monthNames[editPayInv.reference_month - 1]}/${editPayInv.reference_year})`,
-      occurred_on: editPayDate,
-      account_id: editPayAccount,
-      to_account_id: editPayInv.account_id,
-      status: "paid",
-      source: "manual",
-    });
-
-    if (txErr) { toast.error(txErr.message); return; }
-
-    await supabase.from("invoices").update({ paid_at: new Date(editPayDate + "T12:00:00").toISOString() }).eq("id", editPayInv.id);
-
-    toast.success("Pagamento atualizado ✓");
-    setEditPayInv(null);
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
-
-
+  const saveItem = async () => {
     if (!user || !payInv || !itemForm.description || !itemForm.unit_price) return;
     const qty = Number(itemForm.quantity) || 1;
     const unit = Number(itemForm.unit_price) || 0;
@@ -353,12 +276,7 @@ function InvoicesPage() {
           <h2 className="font-display font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Histórico de Pagas ({paidInvoices.length})</h2>
           <div className="space-y-4">
             {paidInvoices.map((inv: any) => (
-              <InvCard
-                key={inv.id}
-                inv={inv}
-                onDeletePayment={() => deletePayment(inv)}
-                onEditPayment={() => openEditPayment(inv)}
-              />
+              <InvCard key={inv.id} inv={inv} />
             ))}
           </div>
         </section>
@@ -444,46 +362,11 @@ function InvoicesPage() {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* MODAL EDITAR PAGAMENTO */}
-      <Dialog open={!!editPayInv} onOpenChange={(v) => !v && setEditPayInv(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar pagamento</DialogTitle>
-            <DialogDescription>Altere a conta ou data do pagamento desta fatura.</DialogDescription>
-          </DialogHeader>
-          {editPayInv && (
-            <div className="space-y-4">
-              <div className="rounded-xl bg-surface-2 p-4 border border-border">
-                <div className="text-xs text-muted-foreground">{editPayInv.accounts?.name} · {monthNames[editPayInv.reference_month - 1]}/{editPayInv.reference_year}</div>
-                <div className="font-mono tabular text-2xl font-bold mt-1">{formatBRL(Number(editPayInv.total_amount))}</div>
-              </div>
-              <div>
-                <Label>Pagar com</Label>
-                <Select value={editPayAccount} onValueChange={setEditPayAccount}>
-                  <SelectTrigger className="mt-1.5"><SelectValue placeholder="Escolha a conta" /></SelectTrigger>
-                  <SelectContent>
-                    {cashAccounts.map((a: any) => (
-                      <SelectItem key={a.id} value={a.id}>{a.name} · {formatBRL(Number(a.current_balance))}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Data do pagamento</Label>
-                <Input type="date" value={editPayDate} onChange={(e) => setEditPayDate(e.target.value)} className="mt-1.5" />
-              </div>
-              <Button onClick={confirmEditPayment} className="w-full"><Check className="h-4 w-4 mr-2" />Salvar alterações</Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
     </div>
   );
 }
 
-function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment }: any) {
+function InvCard({ inv, isNext, onPay, onAddItem }: any) {
   const [expanded, setExpanded] = useState(false);
 
   const { data: details } = useQuery({
@@ -548,16 +431,6 @@ function InvCard({ inv, isNext, onPay, onAddItem, onEditPayment, onDeletePayment
           {onPay && !isPaid && (
             <Button size="sm" onClick={onPay}>
               <Check className="h-3.5 w-3.5 mr-1.5" />Pagar
-            </Button>
-          )}
-          {isPaid && onEditPayment && (
-            <Button size="sm" variant="outline" onClick={onEditPayment} title="Editar pagamento">
-              <Pencil className="h-3.5 w-3.5" />
-            </Button>
-          )}
-          {isPaid && onDeletePayment && (
-            <Button size="sm" variant="ghost" onClick={onDeletePayment} title="Desfazer pagamento">
-              <Trash2 className="h-3.5 w-3.5 text-destructive" />
             </Button>
           )}
           <Button size="sm" variant="ghost" onClick={() => setExpanded(!expanded)}>
