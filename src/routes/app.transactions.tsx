@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
-import { formatBRL, formatDateBR, localDateString } from "@/lib/format";
+import { formatBRL, formatDateBR, localDateString, monthNames } from "@/lib/format";
 import { 
   Trash2, Plus, Pencil, Search, ArrowRightLeft, ShieldCheck, 
   AlertTriangle, AlertCircle, Info, CreditCard, Wallet,
@@ -50,6 +50,7 @@ function TxPage() {
     to_account_id: "",
     category_id: "",
     payment_method: "debito",
+    invoice_id: "",
   });
 
   const resetForm = () => {
@@ -61,7 +62,8 @@ function TxPage() {
       account_id: "", 
       to_account_id: "", 
       category_id: "", 
-      payment_method: "debito"
+      payment_method: "debito",
+      invoice_id: "",
     });
     setEditId(null);
     setPropagate(false);
@@ -100,8 +102,49 @@ function TxPage() {
     enabled: !!user,
   });
 
+  const { data: availableInvoices = [] } = useQuery({
+    queryKey: ["available-invoices", form.account_id, form.occurred_on],
+    queryFn: async () => {
+      if (!form.account_id) return [];
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("account_id", form.account_id)
+        .in("status", ["open", "closed"])
+        .order("due_date", { ascending: true });
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!form.account_id && activeFormTab === "credit",
+  });
+
   const cashAccounts = useMemo(() => accounts.filter((a: any) => a.type !== "credit_card"), [accounts]);
   const creditCardAccounts = useMemo(() => accounts.filter((a: any) => a.type === "credit_card"), [accounts]);
+
+  const currentAccount = useMemo(() => accounts.find(a => a.id === form.account_id), [accounts, form.account_id]);
+  const isCreditActive = activeFormTab === "credit";
+  
+  const showInvoiceSelector = useMemo(() => {
+    if (!isCreditActive || !currentAccount || !form.occurred_on) return false;
+    const closingDay = currentAccount.closing_day || 14;
+    const day = new Date(form.occurred_on + "T12:00:00").getDate();
+    // Janela de incerteza: Dias 13, 14, 15 se o corte for 14
+    return Math.abs(day - closingDay) <= 1;
+  }, [isCreditActive, currentAccount, form.occurred_on]);
+
+  // Se estiver editando ou na janela de incerteza, queremos sugerir a fatura
+  useEffect(() => {
+    const autoSetInvoice = async () => {
+      if (isCreditActive && form.account_id && form.occurred_on && !editId) {
+        const { data: invId } = await supabase.rpc('ensure_invoice', {
+          p_account_id: form.account_id,
+          p_date: form.occurred_on
+        });
+        if (invId) setForm(prev => ({ ...prev, invoice_id: invId }));
+      }
+    };
+    autoSetInvoice();
+  }, [isCreditActive, form.account_id, form.occurred_on, editId]);
 
   const tx = useMemo(() => {
     const sMonth = startOfMonth(viewDate);
@@ -147,17 +190,17 @@ function TxPage() {
 
     setSubmitting(true);
     try {
-      let invoiceId = null;
+      let finalInvoiceId = form.invoice_id || null;
       const account = accounts.find(a => a.id === form.account_id);
       
-      // Lógica de Fatura Automática para Cartão de Crédito
-      if (account?.type === 'credit_card') {
+      // Se não foi selecionado manualmente, tenta o automático
+      if (account?.type === 'credit_card' && !finalInvoiceId) {
         const { data: invId, error: invErr } = await supabase.rpc('ensure_invoice', {
           p_account_id: form.account_id,
           p_date: form.occurred_on
         });
         if (invErr) throw invErr;
-        invoiceId = invId;
+        finalInvoiceId = invId;
       }
 
       const payload: any = {
@@ -170,7 +213,7 @@ function TxPage() {
         to_account_id: form.type === "transfer" ? form.to_account_id : null,
         category_id: form.category_id || null,
         payment_method: account?.type === 'credit_card' ? 'credito' : form.payment_method,
-        invoice_id: invoiceId
+        invoice_id: finalInvoiceId
       };
 
       if (editId) {
@@ -205,6 +248,7 @@ function TxPage() {
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoice-details"] });
     } catch (e: any) {
       toast.error(e.message);
     } finally {
@@ -224,6 +268,7 @@ function TxPage() {
       toast.success("Excluído");
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     }
   };
 
@@ -240,6 +285,7 @@ function TxPage() {
       to_account_id: t.to_account_id || "",
       category_id: t.category_id || "",
       payment_method: t.payment_method || "debito",
+      invoice_id: t.invoice_id || "",
     });
     setEditId(t.id);
     setActiveFormTab(isCreditCard ? "credit" : "common");
@@ -254,7 +300,8 @@ function TxPage() {
     setForm(prev => ({ 
       ...prev, 
       account_id: "", 
-      type: val === "credit" ? "expense" : "expense" 
+      type: val === "credit" ? "expense" : "expense",
+      invoice_id: ""
     }));
   };
 
@@ -350,6 +397,32 @@ function TxPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {isCreditActive && (editId || showInvoiceSelector) && (
+                  <div className="animate-in slide-in-from-top-2 duration-300">
+                    <Label className="flex items-center gap-2">
+                      Fatura de Referência
+                      {showInvoiceSelector && <span className="text-[10px] px-1.5 py-0.5 rounded bg-audit-yellow/20 text-audit-yellow font-bold uppercase tracking-tighter">Período de Corte</span>}
+                    </Label>
+                    <Select value={form.invoice_id} onValueChange={(v) => setForm({ ...form, invoice_id: v })}>
+                      <SelectTrigger className="mt-1.5">
+                        <SelectValue placeholder="Selecione a fatura..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableInvoices.length > 0 ? (
+                          availableInvoices.map((inv: any) => (
+                            <SelectItem key={inv.id} value={inv.id}>
+                              {monthNames[inv.reference_month - 1]}/{inv.reference_year} (Vence {formatDateBR(inv.due_date).slice(0, 5)})
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <div className="p-2 text-xs text-muted-foreground text-center italic">Nenhuma fatura aberta encontrada</div>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {showInvoiceSelector && <p className="text-[10px] text-muted-foreground mt-1">Este lançamento está próximo ao fechamento. Confirme o mês da fatura.</p>}
+                  </div>
+                )}
 
                 {form.type === "transfer" && activeFormTab === "common" && (
                   <div>
