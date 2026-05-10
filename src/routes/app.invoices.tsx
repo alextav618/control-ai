@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -84,7 +84,7 @@ function InvoicesPage() {
     enabled: !!user,
   });
 
-  const { data: initialBalances = [], isLoading: adjLoading } = useQuery({
+  const { data: initialBalances = [] } = useQuery({
     queryKey: ["initial_balances", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -96,6 +96,42 @@ function InvoicesPage() {
     },
     enabled: !!user,
   });
+
+  // Limpeza de Dados Órfãos (Iniciado ao montar a página)
+  useEffect(() => {
+    const cleanupOrphans = async () => {
+      if (!user) return;
+      // Busca transações de pagamento de fatura onde a fatura não está paga
+      const { data: orphans } = await supabase
+        .from("transactions")
+        .select("id, amount, account_id, to_account_id, accounts!transactions_account_id_fkey(name)")
+        .eq("type", "transfer")
+        .ilike("description", "Pagamento fatura%")
+        .not("to_account_id", "is", null);
+
+      if (orphans && orphans.length > 0) {
+        for (const orphan of orphans) {
+          // Verifica se a fatura de destino está realmente paga
+          const { data: inv } = await supabase
+            .from("invoices")
+            .select("id")
+            .eq("account_id", orphan.to_account_id)
+            .eq("status", "paid")
+            .eq("total_amount", orphan.amount)
+            .maybeSingle();
+
+          if (!inv) {
+            console.warn(`[Cleanup] Removendo lançamento órfão ID: ${orphan.id} de R$ ${orphan.amount}`);
+            await supabase.from("transactions").delete().eq("id", orphan.id);
+            console.info(`Reversão automática (Cleanup): +${formatBRL(orphan.amount)} para a conta ${orphan.accounts?.name}`);
+          }
+        }
+        qc.invalidateQueries({ queryKey: ["accounts"] });
+        qc.invalidateQueries({ queryKey: ["transactions"] });
+      }
+    };
+    cleanupOrphans();
+  }, [user]);
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
@@ -144,15 +180,16 @@ function InvoicesPage() {
     setPayInv(null);
     qc.invalidateQueries({ queryKey: ["invoices"] });
     qc.invalidateQueries({ queryKey: ["transactions"] });
+    qc.invalidateQueries({ queryKey: ["accounts"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
   const handleOpenRevert = async (inv: any) => {
     setRevertInv(inv);
-    // Tenta localizar a transação de pagamento para mostrar detalhes do estorno
+    // Tenta localizar a transação de pagamento exata vinculada a esta fatura
     const { data: payTx } = await supabase
       .from("transactions")
-      .select("*, accounts(name)")
+      .select("*, accounts!transactions_account_id_fkey(name)")
       .eq("to_account_id", inv.account_id)
       .eq("type", "transfer")
       .eq("amount", inv.total_amount)
@@ -167,21 +204,28 @@ function InvoicesPage() {
     if (!revertInv) return;
     setIsReverting(true);
     try {
+      // 1. ATOMICIDADE PARTE 1: Excluir a transação de saída (Despesa/Transferência)
+      // O trigger do banco cuidará de estornar o balance automaticamente na exclusão
       if (payTxToRevert) {
         const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
         if (delErr) throw delErr;
+        console.log(`Reversão concluída: +${formatBRL(payTxToRevert.amount)} para a conta ${payTxToRevert.accounts?.name}`);
       }
       
+      // 2. ATOMICIDADE PARTE 2: Voltar status da fatura
       const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
       if (upErr) throw upErr;
       
-      toast.success("Fatura revertida e saldo estornado!");
+      toast.success("Fatura revertida e saldo bancário estornado com sucesso!");
+      
+      // 3. ATOMICIDADE PARTE 3: Sincronização da UI
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
       qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
     } catch (e: any) {
-      toast.error(`Erro ao reverter: ${e.message}`);
+      console.error("[Revert Error]", e);
+      toast.error(`Erro crítico ao reverter: ${e.message}`);
     } finally {
       setIsReverting(false);
       setRevertInv(null);
@@ -333,7 +377,6 @@ function InvoicesPage() {
             </section>
           )}
 
-          {/* AJUSTES DE SALDO */}
           <section className="pt-6 border-t border-border/50">
             <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest flex items-center gap-2">
               <Settings2 className="h-4 w-4" /> Ajustes de Saldo Inicial
@@ -390,7 +433,7 @@ function InvoicesPage() {
       <Dialog open={!!revertInv} onOpenChange={(v) => !v && setRevertInv(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reverter para 'Em Aberto'?</DialogTitle>
+            <DialogTitle>Atenção: Confirmar Estorno</DialogTitle>
             <DialogDescription>
               A fatura de <strong>{revertInv?.accounts?.name}</strong> será movida de volta para a lista de pendentes.
             </DialogDescription>
@@ -398,7 +441,7 @@ function InvoicesPage() {
           
           <div className="space-y-4 py-4">
             <div className="rounded-xl bg-surface-2 p-4 border border-border">
-              <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Estorno Estimado</div>
+              <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Valor a ser Devolvido</div>
               <div className="font-mono font-bold text-2xl text-audit-green">+{formatBRL(revertInv?.total_amount)}</div>
               {payTxToRevert ? (
                 <div className="mt-2 text-xs flex items-center gap-1.5 text-muted-foreground">
@@ -411,9 +454,9 @@ function InvoicesPage() {
               )}
             </div>
             
-            <div className="text-sm text-muted-foreground leading-relaxed">
-              Ao confirmar, o lançamento de saída será excluído e o valor será somado de volta ao seu saldo bancário.
-            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Ao confirmar, o lançamento de saída será excluído e o valor será somado de volta ao seu saldo bancário imediatamente.
+            </p>
           </div>
 
           <DialogFooter className="gap-2 sm:gap-0">
