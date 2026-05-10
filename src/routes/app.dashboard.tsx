@@ -68,6 +68,7 @@ function Dashboard() {
     enabled: !!user,
   });
 
+  // Vinculação manual de dados para o Dashboard
   const tx = useMemo(() => {
     if (!data) return [];
     return data.transactions.map((t: any) => ({
@@ -77,9 +78,9 @@ function Dashboard() {
     }));
   }, [data]);
 
-  // Transferências são ignoradas nos totais de receita e despesa
-  const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const validTx = tx.filter((t: any) => t.type !== "transfer");
+  const income = validTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const expense = validTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
   
   const cashAccounts = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card");
@@ -108,6 +109,7 @@ function Dashboard() {
   }, [data]);
 
   const totalCardDebt = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
+    // Como não temos join aqui, o total_amount da fatura já deve estar atualizado pelo trigger
     return sum + Number(inv.total_amount || 0);
   }, 0);
 
@@ -124,16 +126,16 @@ function Dashboard() {
     return counts;
   }, [data]);
 
-  const cardExpense = tx.filter((t: any) => 
+  const cardExpense = validTx.filter((t: any) => 
     t.type === "expense" && 
     (t.accounts?.type === "credit_card" || t.invoice_id)
   ).reduce((s: number, t: any) => s + Number(t.amount), 0);
   
-  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const fixedExpense = validTx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
   const variableExpense = expense - cardExpense - fixedExpense;
 
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
-  tx.filter((t: any) => t.type === "expense").forEach((t: any) => {
+  validTx.filter((t: any) => t.type === "expense").forEach((t: any) => {
     const k = t.category_id ?? "none";
     const name = t.categories?.name ?? "Sem categoria";
     const icon = t.categories?.icon;
@@ -328,7 +330,7 @@ function Dashboard() {
               <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-surface-2 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-8 w-8 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-                    {t.type === 'transfer' ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
+                    {t.categories?.icon || "📦"}
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.description}</div>
@@ -337,9 +339,9 @@ function Dashboard() {
                 </div>
                 <div className={cn(
                   "font-mono tabular text-sm font-semibold", 
-                  t.type === 'transfer' ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
+                  t.type === "income" ? "text-income" : t.type === "expense" ? "text-expense" : "text-muted-foreground"
                 )}>
-                  {t.type === 'transfer' ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
+                  {t.type === "income" ? "+" : t.type === "expense" ? "-" : ""}{formatBRL(Number(t.amount))}
                 </div>
               </div>
             ))}
