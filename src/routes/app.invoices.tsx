@@ -96,33 +96,13 @@ function InvoicesPage() {
 
   const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
 
-  const { nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
-    const unpaid = invoices.filter((i: any) => i.status !== "paid");
-    const paid = invoices
-      .filter((i: any) => i.status === "paid")
-      .sort((a, b) => {
-        if (a.reference_year !== b.reference_year) return b.reference_year - a.reference_year;
-        return b.reference_month - a.reference_month;
-      });
-
-    let next: any = null;
-    let rest: any[] = [];
-    if (unpaid.length > 0) {
-      next = unpaid[0];
-      rest = unpaid.slice(1);
-    }
-
-    return { nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
-  }, [invoices]);
-
   /**
-   * SCRIPT DE SINCRONIA: Repara saldos bancários removendo pagamentos órfãos.
+   * REPARO DE SALDOS: Processa transações órfãs e corrige balanços.
    */
   const handleSyncBalances = async () => {
     setIsSyncing(true);
     toast.loading("Iniciando reparo de saldos...", { id: "repair" });
     try {
-      // 1. Busca transações de pagamento que não têm fatura correspondente paga
       const { data: transactions } = await supabase
         .from("transactions")
         .select("id, amount, account_id, to_account_id, description, accounts!transactions_account_id_fkey(name)")
@@ -131,11 +111,12 @@ function InvoicesPage() {
         .not("to_account_id", "is", null);
 
       if (!transactions || transactions.length === 0) {
+        console.log("[Repair] Nenhuma transação de pagamento órfã encontrada.");
         toast.success("Nenhum lançamento órfão detectado.", { id: "repair" });
         return;
       }
 
-      let fixedCount = 0;
+      let processedCount = 0;
       for (const tx of transactions) {
         const { data: inv } = await supabase
           .from("invoices")
@@ -146,22 +127,35 @@ function InvoicesPage() {
           .maybeSingle();
 
         if (!inv) {
-          // ESTORNO EXPLÍCITO: Devolve o dinheiro para a conta de origem
-          const { data: acc } = await supabase.from("accounts").select("current_balance").eq("id", tx.account_id).single();
-          if (acc) {
-            const newBal = Number(acc.current_balance) + Number(tx.amount);
-            await supabase.from("accounts").update({ current_balance: newBal }).eq("id", tx.account_id);
-            await supabase.from("transactions").delete().eq("id", tx.id);
-            console.info(`[REPARO] Reversão órfã: +${formatBRL(tx.amount)} para ${tx.accounts?.name}`);
-            fixedCount++;
+          console.log(`[Repair] Processando órfão: ${tx.description} (R$ ${tx.amount})`);
+          
+          // Estorno explícito no balanço
+          const { data: acc, error: fetchErr } = await supabase.from("accounts").select("current_balance, name").eq("id", tx.account_id).single();
+          if (fetchErr) { console.error(`[Repair] Erro ao buscar conta ${tx.account_id}:`, fetchErr); continue; }
+
+          const newBal = Number(acc.current_balance) + Number(tx.amount);
+          const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBal }).eq("id", tx.account_id);
+          
+          if (upErr) {
+            console.error(`[Repair] FALHA no update de saldo da conta ${acc.name}:`, upErr);
+          } else {
+            const { error: delErr } = await supabase.from("transactions").delete().eq("id", tx.id);
+            if (delErr) {
+              console.error(`[Repair] FALHA ao deletar transação ${tx.id}:`, delErr);
+            } else {
+              console.info(`[Repair] SUCESSO: +${formatBRL(tx.amount)} para ${acc.name}`);
+              processedCount++;
+            }
           }
         }
       }
 
-      toast.success(`Reparo concluído. ${fixedCount} contas ajustadas.`, { id: "repair" });
+      toast.success(`Reparo concluído. ${processedCount} transações processadas.`, { id: "repair" });
       qc.invalidateQueries({ queryKey: ["accounts"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
     } catch (e: any) {
+      console.error("[Repair Global Error]", e);
       toast.error(`Falha no reparo: ${e.message}`, { id: "repair" });
     } finally {
       setIsSyncing(false);
@@ -184,7 +178,7 @@ function InvoicesPage() {
   };
 
   /**
-   * REVERSÃO EXPLÍCITA: Deleta transação e incrementa saldo manualmente.
+   * REVERSÃO EXPLÍCITA COM LOGS DE DIAGNÓSTICO
    */
   const confirmRevert = async () => {
     if (!revertInv) return;
@@ -193,40 +187,55 @@ function InvoicesPage() {
       const targetAccountId = payTxToRevert?.account_id;
       const amount = Number(revertInv.total_amount);
 
-      // 1. EXCLUSÃO DA TRANSAÇÃO
-      if (payTxToRevert?.id) {
-        await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
-      } else {
-        // Backup: Exclui por padrão de descrição se o ID falhar
-        await supabase.from("transactions")
-          .delete()
-          .eq("type", "transfer")
-          .eq("to_account_id", revertInv.account_id)
-          .ilike("description", `%${revertInv.accounts?.name}%`)
-          .eq("amount", amount);
-      }
-      
-      // 2. ESTORNO EXPLÍCITO DE SALDO (Garante a integridade se o trigger falhar)
+      // 1. ESTORNO EXPLÍCITO DE SALDO (Fail-safe contra falhas de trigger)
       if (targetAccountId) {
-        const { data: acc } = await supabase.from("accounts").select("current_balance").eq("id", targetAccountId).single();
-        if (acc) {
-          const newBalance = Number(acc.current_balance) + amount;
-          await supabase.from("accounts").update({ current_balance: newBalance }).eq("id", targetAccountId);
-          console.log(`Reversão concluída: +${formatBRL(amount)} para a conta ${payTxToRevert?.accounts?.name || 'Banco'}`);
+        console.log(`[Revert] Iniciando estorno de R$ ${amount} para conta ID: ${targetAccountId}`);
+        
+        const { data: acc, error: fetchErr } = await supabase.from("accounts").select("current_balance, name").eq("id", targetAccountId).single();
+        if (fetchErr) {
+          console.error("[Revert] Erro ao buscar saldo atual da conta:", fetchErr);
+          throw new Error("Não foi possível verificar o saldo da conta.");
+        }
+
+        const newBalance = Number(acc.current_balance) + amount;
+        const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBalance }).eq("id", targetAccountId);
+        
+        if (upErr) {
+          console.error("[Revert] FALHA na atualização de saldo (Verifique RLS):", upErr);
+          throw new Error(`Falha de persistência no saldo: ${upErr.message}`);
+        }
+        
+        console.log(`Reversão concluída: +${formatBRL(amount)} para a conta ${acc.name}`);
+      }
+
+      // 2. EXCLUSÃO DA TRANSAÇÃO DE PAGAMENTO
+      if (payTxToRevert?.id) {
+        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
+        if (delErr) {
+          console.warn("[Revert] Erro ao deletar transação vinculada, mas o saldo foi atualizado:", delErr);
         }
       }
       
       // 3. ATUALIZA STATUS DA FATURA
-      const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
-      if (upErr) throw upErr;
+      const { error: invErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
+      if (invErr) {
+        console.error("[Revert] Erro ao atualizar status da fatura:", invErr);
+        throw invErr;
+      }
       
-      toast.success("Fatura revertida e saldo estornado!");
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["transactions"] });
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      toast.success("Fatura revertida e saldo estornado com sucesso!");
+      
+      // 4. INVALIDAÇÃO TOTAL DE ESTADOS
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["invoices"] }),
+        qc.invalidateQueries({ queryKey: ["accounts"] }),
+        qc.invalidateQueries({ queryKey: ["transactions"] }),
+        qc.invalidateQueries({ queryKey: ["dashboard"] })
+      ]);
+
     } catch (e: any) {
-      toast.error(`Erro crítico na reversão: ${e.message}`);
+      console.error("[Revert Atomic Error]", e);
+      toast.error(`Erro na operação: ${e.message}`);
     } finally {
       setIsReverting(false);
       setRevertInv(null);
