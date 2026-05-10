@@ -198,15 +198,19 @@ function TxPage() {
   };
 
   const submit = async () => {
-    if (submitting || !user || !form.description || !form.amount || !form.account_id) return;
-    setSubmitting(true);
-    try {
-      const amountNum = Number(form.amount);
-      const occurredDate = new Date(form.occurred_on + "T12:00:00");
-      const account = accounts.find((a: any) => a.id === form.account_id);
+  if (submitting || !user || !form.description || !form.amount || !form.account_id) return;
+  setSubmitting(true);
+  try {
+    const amountNum = Number(form.amount);
+    const occurredDate = new Date(form.occurred_on + "T12:00:00");
+    const account = accounts.find((a: any) => a.id === form.account_id);
+    const isCard = account?.type === "credit_card";
 
-      // CORREÇÃO: detecta cartão independente da aba ativa
-      const isCard = account?.type === "credit_card";
+    // LOG TEMPORÁRIO
+    console.log("account:", account);
+    console.log("isCard:", isCard);
+    console.log("form.account_id:", form.account_id);
+    console.log("accounts:", accounts);
 
       if (form.type === "transfer") {
         const row = {
