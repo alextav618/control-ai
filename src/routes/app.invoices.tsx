@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock, RotateCcw } from "lucide-react";
+import { Check, CreditCard, Plus, Trash2, Pencil, ChevronDown, ChevronUp, AlertCircle, Settings2, Loader2, Archive, Clock, RotateCcw, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createFileRoute } from "@tanstack/react-router";
@@ -44,6 +44,7 @@ function InvoicesPage() {
   const [payDate, setPayDate] = useState(localDateString());
 
   const [revertInv, setRevertInv] = useState<any>(null);
+  const [payTxToRevert, setPayTxToRevert] = useState<any>(null);
   const [isReverting, setIsReverting] = useState(false);
 
   // Estados para Itens Extras
@@ -146,26 +147,45 @@ function InvoicesPage() {
     qc.invalidateQueries({ queryKey: ["dashboard"] });
   };
 
+  const handleOpenRevert = async (inv: any) => {
+    setRevertInv(inv);
+    // Tenta localizar a transação de pagamento para mostrar detalhes do estorno
+    const { data: payTx } = await supabase
+      .from("transactions")
+      .select("*, accounts(name)")
+      .eq("to_account_id", inv.account_id)
+      .eq("type", "transfer")
+      .eq("amount", inv.total_amount)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    setPayTxToRevert(payTx);
+  };
+
   const confirmRevert = async () => {
     if (!revertInv) return;
     setIsReverting(true);
     try {
-      const { data: payTx } = await supabase.from("transactions").select("id").eq("to_account_id", revertInv.account_id).eq("type", "transfer").eq("amount", revertInv.total_amount).maybeSingle();
-      if (payTx) {
-        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTx.id);
+      if (payTxToRevert) {
+        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
         if (delErr) throw delErr;
       }
+      
       const { error: upErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
       if (upErr) throw upErr;
-      toast.success("Fatura revertida para 'Em Aberto'");
+      
+      toast.success("Fatura revertida e saldo estornado!");
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
     } catch (e: any) {
       toast.error(`Erro ao reverter: ${e.message}`);
     } finally {
       setIsReverting(false);
       setRevertInv(null);
+      setPayTxToRevert(null);
     }
   };
 
@@ -357,7 +377,7 @@ function InvoicesPage() {
               <InvCard
                 key={inv.id}
                 inv={inv}
-                onRevert={() => setRevertInv(inv)}
+                onRevert={() => handleOpenRevert(inv)}
                 onEditItem={(item: any) => openEditItem(item, inv)}
                 onDeleteItem={deleteItem}
               />
@@ -375,17 +395,32 @@ function InvoicesPage() {
               A fatura de <strong>{revertInv?.accounts?.name}</strong> será movida de volta para a lista de pendentes.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4 text-sm text-audit-yellow flex items-start gap-3 bg-audit-yellow/10 p-4 rounded-xl border border-audit-yellow/20">
-            <AlertCircle className="h-5 w-5 shrink-0" />
-            <div>
-              <strong>Atenção:</strong> O registro de saída (transferência) vinculado a este pagamento será excluído para manter a sincronia dos saldos.
+          
+          <div className="space-y-4 py-4">
+            <div className="rounded-xl bg-surface-2 p-4 border border-border">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-widest mb-1">Estorno Estimado</div>
+              <div className="font-mono font-bold text-2xl text-audit-green">+{formatBRL(revertInv?.total_amount)}</div>
+              {payTxToRevert ? (
+                <div className="mt-2 text-xs flex items-center gap-1.5 text-muted-foreground">
+                  <ArrowRight className="h-3 w-3" /> Devolvendo para: <span className="font-semibold text-foreground">{payTxToRevert.accounts?.name}</span>
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-audit-yellow flex items-center gap-1.5">
+                  <AlertCircle className="h-3 w-3" /> Transação de pagamento não localizada. O saldo pode precisar de ajuste manual.
+                </div>
+              )}
+            </div>
+            
+            <div className="text-sm text-muted-foreground leading-relaxed">
+              Ao confirmar, o lançamento de saída será excluído e o valor será somado de volta ao seu saldo bancário.
             </div>
           </div>
+
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setRevertInv(null)}>Cancelar</Button>
             <Button variant="destructive" onClick={confirmRevert} disabled={isReverting}>
               {isReverting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RotateCcw className="h-4 w-4 mr-2" />}
-              Sim, Reverter
+              Sim, Reverter e Estornar
             </Button>
           </DialogFooter>
         </DialogContent>
