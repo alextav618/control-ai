@@ -198,4 +198,141 @@ function InsightsPage() {
       const expense = validTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
       const income = validTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
       const itemsTotal = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);
-      const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Itens de fatura: ${formatBRL(itemsTotal)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
+            const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Itens de fatura: ${formatBRL(itemsTotal)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
+
+      const { data: resp, error } = await supabase.functions.invoke("chat-ai", {
+        body: {
+          text: `Faça uma análise financeira pessoal curta (máx 6 linhas) e direta sobre meu mês: ${summary} Não registre nada, apenas avalie e dê 1 dica prática.`,
+          history: [],
+        },
+      });
+
+      if (error) throw error;
+
+      setAiText(resp?.message ?? "Sem retorno.");
+    } catch (e: any) {
+      toast.error("Não foi possível consultar a IA agora.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="p-6 text-muted-foreground">
+        Carregando insights...
+      </div>
+    );
+  }
+
+  const now = new Date();
+
+  return (
+    <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300 space-y-6">
+      <div>
+        <h1 className="font-display text-2xl md:text-3xl font-bold flex items-center gap-2">
+          <Sparkles className="h-6 w-6 text-primary" />
+          Insights
+        </h1>
+
+        <p className="text-sm text-muted-foreground mt-1">
+          {monthNames[now.getMonth()]} de {now.getFullYear()} · análise automática
+        </p>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-3 md:gap-4">
+        {insights.map((it, i) => (
+          <InsightCard key={i} insight={it} />
+        ))}
+      </div>
+
+      <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-6 shadow-card">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-display font-semibold flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              Avaliação da IA
+            </h2>
+
+            <p className="text-xs text-muted-foreground mt-1">
+              Peça uma análise narrativa em linguagem natural sobre o seu mês.
+            </p>
+          </div>
+
+          <Button onClick={askAi} disabled={aiLoading} variant="outline">
+            {aiLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Analisando...
+              </>
+            ) : (
+              "Pedir avaliação"
+            )}
+          </Button>
+        </div>
+
+        {aiText && (
+          <div className="mt-4 rounded-xl bg-surface-2 border border-border p-4 text-sm whitespace-pre-wrap leading-relaxed">
+            {aiText}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InsightCard({ insight }: { insight: Insight }) {
+  const meta = {
+    praise: {
+      Icon: ThumbsUp,
+      color: "text-audit-green",
+      bg: "bg-audit-green/10",
+      border: "border-audit-green/30",
+    },
+    tip: {
+      Icon: Lightbulb,
+      color: "text-primary",
+      bg: "bg-primary/10",
+      border: "border-primary/30",
+    },
+    warning: {
+      Icon: AlertTriangle,
+      color: "text-audit-yellow",
+      bg: "bg-audit-yellow/10",
+      border: "border-audit-yellow/30",
+    },
+    alert: {
+      Icon: TrendingDown,
+      color: "text-audit-red",
+      bg: "bg-audit-red/10",
+      border: "border-audit-red/30",
+    },
+  }[insight.level];
+
+  const Icon = meta.Icon;
+
+  return (
+    <div className={cn("rounded-2xl border p-4 md:p-5 shadow-card", meta.bg, meta.border)}>
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            "h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-background/50",
+            meta.color
+          )}
+        >
+          <Icon className="h-4 w-4" />
+        </div>
+
+        <div className="min-w-0">
+          <h3 className="font-display font-semibold leading-tight">
+            {insight.title}
+          </h3>
+
+          <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
+            {insight.body}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
