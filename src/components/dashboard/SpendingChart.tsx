@@ -62,6 +62,7 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
                 marginBottom: "4px",
                 color: "hsl(var(--foreground))",
               }}
+              
             />
           <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0} barSize={8}> {/* barSize ajustado para 1/4 do tamanho */}
             {data.map((entry, index) => (
