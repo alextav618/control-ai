@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString, formatDateBR } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -13,6 +13,7 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { BreakdownCard } from "@/components/dashboard/BreakdownCard";
 import { DashboardCard } from "@/components/dashboard/DashboardCard";
 import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { differenceInMonths, startOfMonth } from "date-fns";
 
 export const Route = createFileRoute("/app/dashboard")({
@@ -38,15 +39,14 @@ function Dashboard() {
       const futureLimitDate = new Date(year, now.getMonth() + 4, 0);
       const futureLimit = localDateString(futureLimitDate);
 
-      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, initialBalancesR, assetsR, snapsR, movR, auditR, catsR] = await Promise.all([
+      const [accR, txR, futureTxR, openInvR, billsR, occR, profileR, assetsR, snapsR, movR, auditR, catsR] = await Promise.all([
         supabase.from("accounts").select("*").eq("archived", false),
         supabase.from("transactions").select("*").gte("occurred_on", monthStart).order("occurred_on", { ascending: false }),
-        supabase.from("transactions").select("*").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
+        supabase.from("transactions").select("*, accounts(type)").gt("occurred_on", localDateString()).lte("occurred_on", futureLimit),
         supabase.from("invoices").select("*").in("status", ["open", "closed"]),
         supabase.from("fixed_bills").select("*").eq("active", true),
         supabase.from("recurring_occurrences").select("*").eq("reference_month", month).eq("reference_year", year),
         supabase.from("profiles").select("*").eq("id", user?.id!).maybeSingle(),
-        supabase.from("invoice_initial_balances").select("*"),
         supabase.from("investment_assets").select("*").eq("archived", false),
         supabase.from("investment_snapshots").select("*").order("snapshot_date", { ascending: false }),
         supabase.from("investment_movements").select("*"),
@@ -62,7 +62,6 @@ function Dashboard() {
         bills: billsR.data ?? [],
         occs: occR.data ?? [],
         profile: profileR.data,
-        initialBalances: initialBalancesR.data ?? [],
         assets: assetsR.data ?? [],
         snapshots: snapsR.data ?? [],
         movements: movR.data ?? [],
@@ -82,12 +81,12 @@ function Dashboard() {
     }));
   }, [data]);
 
-  const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
+  const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
   const balance = income - expense;
   
   const cashAccounts = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card");
-  const totalCashBalance = cashAccounts.reduce((s: number, a: any) => s + Number(a.current_balance), 0);
+  const totalCashBalance = cashAccounts.reduce((s: number, a: any) => s + Number(a.current_balance || 0), 0);
 
   const portfolioValue = useMemo(() => {
     if (!data) return 0;
@@ -95,14 +94,15 @@ function Dashboard() {
     for (const a of data.assets) {
       const lastSnap = data.snapshots.find((s: any) => s.asset_id === a.id);
       if (lastSnap) {
-        total += Number(lastSnap.market_value);
+        total += Number(lastSnap.market_value || 0);
       } else {
         const movs = data.movements.filter((m: any) => m.asset_id === a.id);
         const net = movs.reduce((s: number, m: any) => {
-          if (m.type === "deposit") return s + Number(m.amount);
-          if (m.type === "withdrawal") return s - Number(m.amount);
-          if (m.type === "interest" || m.type === "dividend") return s + Number(m.amount);
-          if (m.type === "fee" || m.type === "tax") return s - Number(m.amount);
+          const amt = Number(m.amount || 0);
+          if (m.type === "deposit") return s + amt;
+          if (m.type === "withdrawal") return s - amt;
+          if (m.type === "interest" || m.type === "dividend") return s + amt;
+          if (m.type === "fee" || m.type === "tax") return s - amt;
           return s;
         }, 0);
         total += net;
@@ -129,10 +129,10 @@ function Dashboard() {
   }, [data]);
 
   const cardExpense = tx.filter((t: any) => 
-    t.type === "expense" &&     (t.accounts?.type === "credit_card" || t.invoice_id)
-  ).reduce((s: number, t: any) => s + Number(t.amount), 0);
+    t.type === "expense" && (t.accounts?.type === "credit_card" || t.invoice_id)
+  ).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
   
-  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount || 0), 0);
   const variableExpense = expense - cardExpense - fixedExpense;
 
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
@@ -141,7 +141,7 @@ function Dashboard() {
     const name = t.categories?.name ?? "Sem categoria";
     const icon = t.categories?.icon;
     if (!byCategory[k]) byCategory[k] = { name, icon, total: 0 };
-    byCategory[k].total += Number(t.amount);
+    byCategory[k].total += Number(t.amount || 0);
   });
   const catList = Object.values(byCategory).sort((a, b) => b.total - a.total).slice(0, 6);
 
@@ -162,32 +162,35 @@ function Dashboard() {
       const y = d.getFullYear();
       const targetMonthStart = startOfMonth(d);
 
-      // Despesas Fixas Inteligentes: Filtra por frequência
+      // 1. Despesas Fixas (Filtradas por ciclo)
       const fixedExpenses = (data.bills as any[]).reduce((s, b) => {
+        if (!b.start_date) return s;
         const start = new Date(b.start_date + "T12:00:00");
         const diff = differenceInMonths(targetMonthStart, startOfMonth(start));
         if (diff < 0) return s;
-                const interval = FREQ_INTERVALS[b.frequency || "monthly"] || 1;
-        if (diff % interval !== 0) return s; // Não cai nesse mês
         
-        if (b.total_installments && (diff / interval) >= b.total_installments) return s; // Já acabou
+        const interval = FREQ_INTERVALS[b.frequency || "monthly"] || 1;
+        if (diff % interval !== 0) return s;
+        if (b.total_installments && (diff / interval) >= b.total_installments) return s;
         
         return s + Number(b.expected_amount || 0);
       }, 0);
 
-      // *** ATUALIZAÇÃO: Exclui parcelas do cartão de crédito ***
+      // 2. Parcelas (Apenas fora do cartão de crédito)
       const installments = (data.futureTx as any[])
         .filter((t) => {
           const td = new Date(t.occurred_on + "T12:00:00");
-          // Mantém apenas despesas que NÃO são de cartão de crédito
-          const isCreditCardPayment = t.accounts?.type === "credit_card";
-          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y && !isCreditCardPayment;
+          const isCreditCard = t.accounts?.type === "credit_card";
+          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y && !isCreditCard;
         })
-        .reduce((s, t) => s + Number(t.amount), 0);
+        .reduce((s, t) => s + Number(t.amount || 0), 0);
 
+      // 3. Faturas (Já incluem as parcelas do cartão)
       const invoices = (data.openInvoices as any[])
         .filter((inv) => inv.reference_month === m && inv.reference_year === y)
         .reduce((s, inv) => s + Number(inv.total_amount || 0), 0);
+      
+      const total = fixedExpenses + installments + invoices;
       
       months.push({
         label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
@@ -196,7 +199,7 @@ function Dashboard() {
         fixedExpenses,
         installments,
         invoices,
-        total: fixedExpenses + installments + invoices,
+        total,
       });
     }
     return months;
@@ -275,7 +278,8 @@ function Dashboard() {
             <span>{formatBRL(budget - expense)} restante</span>
           </div>
         </div>
-                <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
+        
+        <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-primary" />
@@ -320,14 +324,14 @@ function Dashboard() {
 
       {/* PROJEÇÃO 3 MESES */}
       <DashboardCard title="Projeção dos próximos meses" icon={CalendarClock}>
-        <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas, parcelas futuras e faturas em aberto.</p>
+        <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas, parcelas fora do cartão e faturas em aberto.</p>
         <div className="grid grid-cols-3 gap-3">
           {projection.map((p) => (
             <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4 flex flex-col">
               <div className="text-xs text-muted-foreground capitalize flex items-center gap-1">
                 {p.label}
                 {p.month === nowRef.getMonth() + 1 && p.year === nowRef.getFullYear() && (
-                  <span className="text-[10px] text-primary"> <u>★</u> </span>
+                  <span className="text-[10px] text-primary font-bold">★</span>
                 )}
               </div>
               <div className="font-mono tabular text-lg md:text-xl font-bold mt-1">{formatBRL(p.total)}</div>
@@ -339,19 +343,27 @@ function Dashboard() {
               <div className="mt-2 space-y-0.5 text-[10px] md:text-xs text-muted-foreground">
                 <div className="flex justify-between"><span>● Desp. Fixas</span><span className="font-mono">{formatBRL(p.fixedExpenses)}</span></div>
                 <div className="flex justify-between"><span>● Faturas</span><span className="font-mono">{formatBRL(p.invoices)}</span></div>
-                <div className="flex justify-between"><span>● Parcelas</span><span className="font-mono">{formatBRL(p.installments)}</span></div>
-                {/* Tooltip de transparência */}
-                <div className="flex items-center gap-1 mt-1">
-                  <span className="text-[10px] text-muted-foreground cursor-help" title="Exibe apenas parcelas fora do cartão de crédito para evitar duplicidade">
-                    <AlertCircle className="h-3 w-3" />
+                <div className="flex justify-between items-center">
+                  <span className="flex items-center gap-1">
+                    ● Parcelas
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Info className="h-3 w-3 cursor-help opacity-50" />
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-[200px] text-[10px]">
+                          Exibe apenas parcelas fora do cartão de crédito para evitar duplicidade.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </span>
-                  <span className="text-[10px] text-muted-foreground">Parcelas</span>
+                  <span className="font-mono">{formatBRL(p.installments)}</span>
                 </div>
               </div>
             </div>
           ))}
         </div>
-      </div>
+      </DashboardCard>
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Recent Transactions */}
@@ -372,7 +384,7 @@ function Dashboard() {
                   "font-mono tabular text-sm font-semibold", 
                   t.type === 'transfer' ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
                 )}>
-                  {t.type === 'transfer' ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
+                  {t.type === 'transfer' ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount || 0))}
                 </div>
               </div>
             ))}
@@ -432,7 +444,7 @@ function Dashboard() {
                         </div>
                       </div>
                     </div>
-                    <div className="font-mono tabular text-muted-foreground whitespace-nowrap">{b.amount_kind === "variable" ? "—" : formatBRL(Number(b.expected_amount))}</div>
+                    <div className="font-mono tabular text-muted-foreground whitespace-nowrap">{b.amount_kind === "variable" ? "—" : formatBRL(Number(b.expected_amount || 0))}</div>
                   </div>
                 );
               })}
