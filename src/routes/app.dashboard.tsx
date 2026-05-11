@@ -13,7 +13,6 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { BreakdownCard } from "@/components/dashboard/BreakdownCard";
 import { DashboardCard } from "@/components/dashboard/DashboardCard";
 import { Progress } from "@/components/ui/progress";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { differenceInMonths, startOfMonth } from "date-fns";
 
 export const Route = createFileRoute("/app/dashboard")({
@@ -154,7 +153,7 @@ function Dashboard() {
   const projection = useMemo(() => {
     if (!data) return [];
     const now = new Date();
-    const months: { label: string; month: number; year: number; fixedExpenses: number; installments: number; invoices: number; total: number }[] = [];
+    const months: { label: string; month: number; year: number; fixedExpenses: number; invoices: number; total: number }[] = [];
     
     for (let i = 0; i < 3; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
@@ -176,28 +175,18 @@ function Dashboard() {
         return s + Number(b.expected_amount || 0);
       }, 0);
 
-      // 2. Parcelas (Apenas fora do cartão de crédito)
-      const installments = (data.futureTx as any[])
-        .filter((t) => {
-          const td = new Date(t.occurred_on + "T12:00:00");
-          const isCreditCard = t.accounts?.type === "credit_card";
-          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y && !isCreditCard;
-        })
-        .reduce((s, t) => s + Number(t.amount || 0), 0);
-
-      // 3. Faturas (Já incluem as parcelas do cartão)
+      // 2. Faturas (Já incluem as parcelas do cartão)
       const invoices = (data.openInvoices as any[])
         .filter((inv) => inv.reference_month === m && inv.reference_year === y)
         .reduce((s, inv) => s + Number(inv.total_amount || 0), 0);
       
-      const total = fixedExpenses + installments + invoices;
+      const total = fixedExpenses + invoices;
       
       months.push({
         label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
         month: m,
         year: y,
         fixedExpenses,
-        installments,
         invoices,
         total,
       });
@@ -324,7 +313,7 @@ function Dashboard() {
 
       {/* PROJEÇÃO 3 MESES */}
       <DashboardCard title="Projeção dos próximos meses" icon={CalendarClock}>
-        <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas, parcelas fora do cartão e faturas em aberto.</p>
+        <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas e faturas em aberto.</p>
         <div className="grid grid-cols-3 gap-3">
           {projection.map((p) => (
             <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4 flex flex-col">
@@ -338,27 +327,10 @@ function Dashboard() {
               <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden flex">
                 <div className="h-full bg-audit-yellow" style={{ width: `${(p.fixedExpenses / Math.max(1, p.total)) * 100}%` }} />
                 <div className="h-full bg-expense" style={{ width: `${(p.invoices / Math.max(1, p.total)) * 100}%` }} />
-                <div className="h-full bg-primary" style={{ width: `${(p.installments / Math.max(1, p.total)) * 100}%` }} />
               </div>
               <div className="mt-2 space-y-0.5 text-[10px] md:text-xs text-muted-foreground">
                 <div className="flex justify-between"><span>● Desp. Fixas</span><span className="font-mono">{formatBRL(p.fixedExpenses)}</span></div>
                 <div className="flex justify-between"><span>● Faturas</span><span className="font-mono">{formatBRL(p.invoices)}</span></div>
-                <div className="flex justify-between items-center">
-                  <span className="flex items-center gap-1">
-                    ● Parcelas
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Info className="h-3 w-3 cursor-help opacity-50" />
-                        </TooltipTrigger>
-                        <TooltipContent className="max-w-[200px] text-[10px]">
-                          Exibe apenas parcelas fora do cartão de crédito para evitar duplicidade.
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </span>
-                  <span className="font-mono">{formatBRL(p.installments)}</span>
-                </div>
               </div>
             </div>
           ))}
