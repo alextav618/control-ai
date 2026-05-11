@@ -247,23 +247,18 @@ function InvoicesPage() {
   if (!user || !payInv || !payAccount) return;
   const amount = Number(payInv.total_amount);
 
-  // 1. Deduz o saldo da conta de origem
   const { data: acc, error: accErr } = await supabase
     .from("accounts")
     .select("current_balance")
     .eq("id", payAccount)
     .single();
-  
-  if (accErr) { toast.error("Erro ao buscar saldo da conta."); return; }
+  if (accErr) { toast.error("Erro ao buscar saldo."); return; }
 
-  const { error: balErr } = await supabase
+  await supabase
     .from("accounts")
     .update({ current_balance: Number(acc.current_balance) - amount })
     .eq("id", payAccount);
 
-  if (balErr) { toast.error("Erro ao atualizar saldo."); return; }
-
-  // 2. Cria a transação de pagamento
   const { error: txErr } = await supabase.from("transactions").insert({
     user_id: user.id,
     type: "transfer",
@@ -272,12 +267,12 @@ function InvoicesPage() {
     occurred_on: payDate,
     account_id: payAccount,
     to_account_id: payInv.account_id,
+    invoice_id: payInv.id, // ← vincula direto à fatura
     status: "paid",
     source: "manual",
   });
   if (txErr) { toast.error(txErr.message); return; }
 
-  // 3. Marca fatura como paga
   await supabase.from("invoices")
     .update({ status: "paid", paid_at: new Date(payDate + "T12:00:00").toISOString() })
     .eq("id", payInv.id);
