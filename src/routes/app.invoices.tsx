@@ -180,8 +180,9 @@ function InvoicesPage() {
   const handleOpenRevert = async (inv: any) => {
   setRevertInv(inv);
   
-  // Busca apenas pelo to_account_id e tipo, sem filtrar por valor
-  const { data: payTx } = await supabase
+  console.log("invoice account_id:", inv.account_id);
+  
+  const { data: payTx, error } = await supabase
     .from("transactions")
     .select("*, accounts!transactions_account_id_fkey(name)")
     .eq("to_account_id", inv.account_id)
@@ -189,6 +190,9 @@ function InvoicesPage() {
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  console.log("payTx encontrado:", payTx);
+  console.log("erro:", error);
 
   setPayTxToRevert(payTx);
 };
