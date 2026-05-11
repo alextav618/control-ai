@@ -244,27 +244,51 @@ function InvoicesPage() {
   };
 
   const confirmPay = async () => {
-    if (!user || !payInv || !payAccount) return;
-    const { error: txErr } = await supabase.from("transactions").insert({
-      user_id: user.id,
-      type: "transfer",
-      amount: Number(payInv.total_amount),
-      description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
-      occurred_on: payDate,
-      account_id: payAccount,
-      to_account_id: payInv.account_id,
-      status: "paid",
-      source: "manual",
-    });
-    if (txErr) { toast.error(txErr.message); return; }
-    await supabase.from("invoices").update({ status: "paid", paid_at: new Date(payDate + "T12:00:00").toISOString() }).eq("id", payInv.id);
-    toast.success("Fatura marcada como paga!");
-    setPayInv(null);
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["transactions"] });
-    qc.invalidateQueries({ queryKey: ["accounts"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-  };
+  if (!user || !payInv || !payAccount) return;
+  const amount = Number(payInv.total_amount);
+
+  // 1. Deduz o saldo da conta de origem
+  const { data: acc, error: accErr } = await supabase
+    .from("accounts")
+    .select("current_balance")
+    .eq("id", payAccount)
+    .single();
+  
+  if (accErr) { toast.error("Erro ao buscar saldo da conta."); return; }
+
+  const { error: balErr } = await supabase
+    .from("accounts")
+    .update({ current_balance: Number(acc.current_balance) - amount })
+    .eq("id", payAccount);
+
+  if (balErr) { toast.error("Erro ao atualizar saldo."); return; }
+
+  // 2. Cria a transação de pagamento
+  const { error: txErr } = await supabase.from("transactions").insert({
+    user_id: user.id,
+    type: "transfer",
+    amount,
+    description: `Pagamento fatura ${payInv.accounts?.name} (${monthNames[payInv.reference_month - 1]}/${payInv.reference_year})`,
+    occurred_on: payDate,
+    account_id: payAccount,
+    to_account_id: payInv.account_id,
+    status: "paid",
+    source: "manual",
+  });
+  if (txErr) { toast.error(txErr.message); return; }
+
+  // 3. Marca fatura como paga
+  await supabase.from("invoices")
+    .update({ status: "paid", paid_at: new Date(payDate + "T12:00:00").toISOString() })
+    .eq("id", payInv.id);
+
+  toast.success("Fatura paga!");
+  setPayInv(null);
+  qc.invalidateQueries({ queryKey: ["invoices"] });
+  qc.invalidateQueries({ queryKey: ["transactions"] });
+  qc.invalidateQueries({ queryKey: ["accounts"] });
+  qc.invalidateQueries({ queryKey: ["dashboard"] });
+};
 
   const triggerRecompute = async (invoiceId: string) => {
     await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
