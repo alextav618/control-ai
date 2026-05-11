@@ -129,8 +129,7 @@ function Dashboard() {
   }, [data]);
 
   const cardExpense = tx.filter((t: any) => 
-    t.type === "expense" && 
-    (t.accounts?.type === "credit_card" || t.invoice_id)
+    t.type === "expense" &&     (t.accounts?.type === "credit_card" || t.invoice_id)
   ).reduce((s: number, t: any) => s + Number(t.amount), 0);
   
   const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
@@ -168,8 +167,7 @@ function Dashboard() {
         const start = new Date(b.start_date + "T12:00:00");
         const diff = differenceInMonths(targetMonthStart, startOfMonth(start));
         if (diff < 0) return s;
-        
-        const interval = FREQ_INTERVALS[b.frequency || "monthly"] || 1;
+                const interval = FREQ_INTERVALS[b.frequency || "monthly"] || 1;
         if (diff % interval !== 0) return s; // Não cai nesse mês
         
         if (b.total_installments && (diff / interval) >= b.total_installments) return s; // Já acabou
@@ -177,10 +175,13 @@ function Dashboard() {
         return s + Number(b.expected_amount || 0);
       }, 0);
 
+      // *** ATUALIZAÇÃO: Exclui parcelas do cartão de crédito ***
       const installments = (data.futureTx as any[])
         .filter((t) => {
           const td = new Date(t.occurred_on + "T12:00:00");
-          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
+          // Mantém apenas despesas que NÃO são de cartão de crédito
+          const isCreditCardPayment = t.accounts?.type === "credit_card";
+          return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y && !isCreditCardPayment;
         })
         .reduce((s, t) => s + Number(t.amount), 0);
 
@@ -274,8 +275,7 @@ function Dashboard() {
             <span>{formatBRL(budget - expense)} restante</span>
           </div>
         </div>
-        
-        <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
+                <Link to="/app/audit" className="rounded-2xl border border-border bg-surface-1 p-4 md:p-5 shadow-card hover:bg-surface-2 transition-colors group">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-primary" />
@@ -323,8 +323,13 @@ function Dashboard() {
         <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas, parcelas futuras e faturas em aberto.</p>
         <div className="grid grid-cols-3 gap-3">
           {projection.map((p) => (
-            <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4">
-              <div className="text-xs text-muted-foreground capitalize">{p.label}</div>
+            <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4 flex flex-col">
+              <div className="text-xs text-muted-foreground capitalize flex items-center gap-1">
+                {p.label}
+                {p.month === nowRef.getMonth() + 1 && p.year === nowRef.getFullYear() && (
+                  <span className="text-[10px] text-primary"> <u>★</u> </span>
+                )}
+              </div>
               <div className="font-mono tabular text-lg md:text-xl font-bold mt-1">{formatBRL(p.total)}</div>
               <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden flex">
                 <div className="h-full bg-audit-yellow" style={{ width: `${(p.fixedExpenses / Math.max(1, p.total)) * 100}%` }} />
@@ -335,11 +340,18 @@ function Dashboard() {
                 <div className="flex justify-between"><span>● Desp. Fixas</span><span className="font-mono">{formatBRL(p.fixedExpenses)}</span></div>
                 <div className="flex justify-between"><span>● Faturas</span><span className="font-mono">{formatBRL(p.invoices)}</span></div>
                 <div className="flex justify-between"><span>● Parcelas</span><span className="font-mono">{formatBRL(p.installments)}</span></div>
+                {/* Tooltip de transparência */}
+                <div className="flex items-center gap-1 mt-1">
+                  <span className="text-[10px] text-muted-foreground cursor-help" title="Exibe apenas parcelas fora do cartão de crédito para evitar duplicidade">
+                    <AlertCircle className="h-3 w-3" />
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">Parcelas</span>
+                </div>
               </div>
             </div>
           ))}
         </div>
-      </DashboardCard>
+      </div>
 
       <div className="grid md:grid-cols-2 gap-6">
         {/* Recent Transactions */}
