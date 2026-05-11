@@ -183,8 +183,9 @@ function InvoicesPage() {
   const { data: payTx } = await supabase
     .from("transactions")
     .select("id, amount, account_id, occurred_on")
-    .eq("invoice_id", inv.id)
+    .eq("to_account_id", inv.account_id)
     .eq("type", "transfer")
+    .eq("occurred_on", inv.paid_at?.slice(0, 10))
     .maybeSingle();
 
   console.log("payTx:", payTx);
