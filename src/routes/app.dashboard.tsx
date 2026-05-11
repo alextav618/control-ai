@@ -149,11 +149,24 @@ function Dashboard() {
   }, [data]);
 
   const auditSummary = useMemo(() => {
-    if (!data?.audit?.length) return { total: 0, green: 0, yellow: 0, red: 0 };
-    const counts = { total: data.audit.length, green: 0, yellow: 0, red: 0 };
-    data.audit.forEach((a: any) => { if (counts[a.level as keyof typeof counts] !== undefined) (counts[a.level as keyof typeof counts] as number)++; });
-    return counts;
-  }, [data]);
+  if (!data?.audit?.length) return { total: 0, green: 0, yellow: 0, red: 0 };
+  
+  const counts = { 
+    total: data.audit.length, 
+    green: 0, 
+    yellow: 0, 
+    red: 0 
+  };
+
+  data.audit.forEach((a: any) => {
+    const level = a.level as keyof typeof counts;
+    if (counts[level] !== undefined) {
+      counts[level] = (counts[level] as number) + 1;
+    }
+  });
+
+  return counts;
+}, [data]);
 
   const handleMonthChange = (offset: number) => {
     const next = addMonths(viewDate, offset);
