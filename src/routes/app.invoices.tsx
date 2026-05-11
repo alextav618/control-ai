@@ -229,7 +229,6 @@ function InvoicesPage() {
   if (!user || !payInv || !payAccount) return;
   const amount = Number(payInv.total_amount);
 
-  // O trigger já deduz o saldo automaticamente ao inserir a transação
   const { error: txErr } = await supabase.from("transactions").insert({
     user_id: user.id,
     type: "transfer",
@@ -238,7 +237,7 @@ function InvoicesPage() {
     occurred_on: payDate,
     account_id: payAccount,
     to_account_id: payInv.account_id,
-    invoice_id: payInv.id,
+    // invoice_id removido — não pode estar aqui senão o trigger soma ao total da fatura
     status: "paid",
     source: "manual",
   });
@@ -255,13 +254,6 @@ function InvoicesPage() {
   qc.invalidateQueries({ queryKey: ["accounts"] });
   qc.invalidateQueries({ queryKey: ["dashboard"] });
 };
-
-  const triggerRecompute = async (invoiceId: string) => {
-    await supabase.rpc("recompute_invoice_total", { p_invoice_id: invoiceId });
-    qc.invalidateQueries({ queryKey: ["invoices"] });
-    qc.invalidateQueries({ queryKey: ["dashboard"] });
-    qc.invalidateQueries({ queryKey: ["invoice-details", invoiceId] });
-  };
 
   const saveItem = async () => {
     if (!user || !targetInvoiceForItem || !itemForm.description || !itemForm.unit_price) return;
