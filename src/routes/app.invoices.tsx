@@ -38,6 +38,7 @@ function InvoicesPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
 
+  // Modais
   const [payInv, setPayInv] = useState<any>(null);
   const [payAccount, setPayAccount] = useState("");
   const [payDate, setPayDate] = useState(localDateString());
@@ -47,15 +48,18 @@ function InvoicesPage() {
   const [isReverting, setIsReverting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
+  // Itens Extras
   const [itemDialog, setItemDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [targetInvoiceForItem, setTargetInvoiceForItem] = useState<any>(null);
   const [itemForm, setItemForm] = useState({ description: "", quantity: "1", unit_price: "" });
 
+  // Ajustes
   const [adjDialog, setAdjDialog] = useState(false);
   const [editingAdj, setEditingAdj] = useState<any>(null);
   const [adjForm, setAdjForm] = useState({ invoice_id: "", amount: "" });
 
+  // Queries
   const { data: invoices = [], isLoading: invLoading } = useQuery({
     queryKey: ["invoices", user?.id],
     queryFn: async () => {
@@ -94,10 +98,30 @@ function InvoicesPage() {
     enabled: !!user,
   });
 
-  const cashAccounts = accounts.filter((a: any) => a.type !== "credit_card");
+  const cashAccounts = useMemo(() => accounts.filter((a: any) => a.type !== "credit_card"), [accounts]);
+
+  // Lógica de Organização de Faturas (CORREÇÃO: restOfUnpaid definida aqui)
+  const { nextInvoice, restOfUnpaid, paidInvoices } = useMemo(() => {
+    const unpaid = (invoices || []).filter((i: any) => i.status !== "paid");
+    const paid = (invoices || [])
+      .filter((i: any) => i.status === "paid")
+      .sort((a, b) => {
+        if (a.reference_year !== b.reference_year) return b.reference_year - a.reference_year;
+        return b.reference_month - a.reference_month;
+      });
+
+    let next: any = null;
+    let rest: any[] = [];
+    if (unpaid.length > 0) {
+      next = unpaid[0];
+      rest = unpaid.slice(1);
+    }
+
+    return { nextInvoice: next, restOfUnpaid: rest, paidInvoices: paid };
+  }, [invoices]);
 
   /**
-   * REPARO DE SALDOS: Processa transações órfãs e corrige balanços.
+   * SCRIPT DE REPARO: Remove transações de pagamento sem faturas pagas correspondentes.
    */
   const handleSyncBalances = async () => {
     setIsSyncing(true);
@@ -111,7 +135,6 @@ function InvoicesPage() {
         .not("to_account_id", "is", null);
 
       if (!transactions || transactions.length === 0) {
-        console.log("[Repair] Nenhuma transação de pagamento órfã encontrada.");
         toast.success("Nenhum lançamento órfão detectado.", { id: "repair" });
         return;
       }
@@ -129,20 +152,13 @@ function InvoicesPage() {
         if (!inv) {
           console.log(`[Repair] Processando órfão: ${tx.description} (R$ ${tx.amount})`);
           
-          // Estorno explícito no balanço
-          const { data: acc, error: fetchErr } = await supabase.from("accounts").select("current_balance, name").eq("id", tx.account_id).single();
-          if (fetchErr) { console.error(`[Repair] Erro ao buscar conta ${tx.account_id}:`, fetchErr); continue; }
-
-          const newBal = Number(acc.current_balance) + Number(tx.amount);
-          const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBal }).eq("id", tx.account_id);
-          
-          if (upErr) {
-            console.error(`[Repair] FALHA no update de saldo da conta ${acc.name}:`, upErr);
-          } else {
-            const { error: delErr } = await supabase.from("transactions").delete().eq("id", tx.id);
-            if (delErr) {
-              console.error(`[Repair] FALHA ao deletar transação ${tx.id}:`, delErr);
-            } else {
+          const { data: acc } = await supabase.from("accounts").select("current_balance, name").eq("id", tx.account_id).single();
+          if (acc) {
+            const newBal = Number(acc.current_balance) + Number(tx.amount);
+            const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBal }).eq("id", tx.account_id);
+            
+            if (!upErr) {
+              await supabase.from("transactions").delete().eq("id", tx.id);
               console.info(`[Repair] SUCESSO: +${formatBRL(tx.amount)} para ${acc.name}`);
               processedCount++;
             }
@@ -155,7 +171,6 @@ function InvoicesPage() {
       qc.invalidateQueries({ queryKey: ["transactions"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
     } catch (e: any) {
-      console.error("[Repair Global Error]", e);
       toast.error(`Falha no reparo: ${e.message}`, { id: "repair" });
     } finally {
       setIsSyncing(false);
@@ -178,7 +193,7 @@ function InvoicesPage() {
   };
 
   /**
-   * REVERSÃO EXPLÍCITA COM LOGS DE DIAGNÓSTICO
+   * REVERSÃO EXPLÍCITA: Estorno manual de saldo e exclusão de transação.
    */
   const confirmRevert = async () => {
     if (!revertInv) return;
@@ -187,45 +202,29 @@ function InvoicesPage() {
       const targetAccountId = payTxToRevert?.account_id;
       const amount = Number(revertInv.total_amount);
 
-      // 1. ESTORNO EXPLÍCITO DE SALDO (Fail-safe contra falhas de trigger)
+      // 1. ESTORNO EXPLÍCITO DE SALDO
       if (targetAccountId) {
-        console.log(`[Revert] Iniciando estorno de R$ ${amount} para conta ID: ${targetAccountId}`);
-        
         const { data: acc, error: fetchErr } = await supabase.from("accounts").select("current_balance, name").eq("id", targetAccountId).single();
-        if (fetchErr) {
-          console.error("[Revert] Erro ao buscar saldo atual da conta:", fetchErr);
-          throw new Error("Não foi possível verificar o saldo da conta.");
-        }
+        if (fetchErr) throw new Error("Não foi possível verificar o saldo da conta.");
 
         const newBalance = Number(acc.current_balance) + amount;
         const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBalance }).eq("id", targetAccountId);
         
-        if (upErr) {
-          console.error("[Revert] FALHA na atualização de saldo (Verifique RLS):", upErr);
-          throw new Error(`Falha de persistência no saldo: ${upErr.message}`);
-        }
-        
+        if (upErr) throw new Error(`Falha ao atualizar saldo: ${upErr.message}`);
         console.log(`Reversão concluída: +${formatBRL(amount)} para a conta ${acc.name}`);
       }
 
-      // 2. EXCLUSÃO DA TRANSAÇÃO DE PAGAMENTO
+      // 2. EXCLUSÃO DA TRANSAÇÃO
       if (payTxToRevert?.id) {
-        const { error: delErr } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
-        if (delErr) {
-          console.warn("[Revert] Erro ao deletar transação vinculada, mas o saldo foi atualizado:", delErr);
-        }
+        await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
       }
       
       // 3. ATUALIZA STATUS DA FATURA
       const { error: invErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
-      if (invErr) {
-        console.error("[Revert] Erro ao atualizar status da fatura:", invErr);
-        throw invErr;
-      }
+      if (invErr) throw invErr;
       
       toast.success("Fatura revertida e saldo estornado com sucesso!");
       
-      // 4. INVALIDAÇÃO TOTAL DE ESTADOS
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["invoices"] }),
         qc.invalidateQueries({ queryKey: ["accounts"] }),
@@ -234,7 +233,7 @@ function InvoicesPage() {
       ]);
 
     } catch (e: any) {
-      console.error("[Revert Atomic Error]", e);
+      console.error("[Revert Error]", e);
       toast.error(`Erro na operação: ${e.message}`);
     } finally {
       setIsReverting(false);
@@ -356,7 +355,7 @@ function InvoicesPage() {
             )}
           </section>
 
-          {restOfUnpaid.length > 0 && (
+          {(restOfUnpaid || []).length > 0 && (
             <section>
               <h2 className="font-display font-semibold mb-4 text-xs text-muted-foreground uppercase tracking-widest">Outras Faturas Pendentes</h2>
               <div className="space-y-4">
@@ -389,7 +388,7 @@ function InvoicesPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {initialBalances.map((adj: any) => (
+                    {(initialBalances || []).map((adj: any) => (
                       <tr key={adj.id}>
                         <td className="px-4 py-3">
                           <div className="font-medium">{adj.invoices?.accounts?.name}</div>
@@ -410,7 +409,7 @@ function InvoicesPage() {
         </TabsContent>
 
         <TabsContent value="archive" className="space-y-4">
-          {paidInvoices.length === 0 ? (
+          {(paidInvoices || []).length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">Nenhuma fatura paga.</div>
           ) : (
             paidInvoices.map((inv: any) => (
@@ -618,7 +617,7 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDelete
                 <span className="font-mono tabular">{formatBRL(Number(details.adjustment.amount))}</span>
               </div>
             )}
-            {details?.transactions.map((t: any) => (
+            {(details?.transactions || []).map((t: any) => (
               <div key={t.id} className="flex items-center justify-between py-1.5 text-sm">
                 <div className="flex items-center gap-2 truncate">
                   <span className="text-xs text-muted-foreground">{formatDateBR(t.occurred_on).slice(0, 5)}</span>
@@ -627,7 +626,7 @@ function InvCard({ inv, isNext, onPay, onAddItem, onRevert, onEditItem, onDelete
                 <span className="font-mono tabular">{formatBRL(Number(t.amount))}</span>
               </div>
             ))}
-            {details?.items.map((it: any) => (
+            {(details?.items || []).map((it: any) => (
               <div key={it.id} className="group flex items-center justify-between py-1.5 text-sm text-primary">
                 <div className="flex items-center gap-2 truncate">
                   <span className="text-[10px] px-1 rounded bg-primary/10">EXTRA</span>
