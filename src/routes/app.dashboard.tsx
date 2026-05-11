@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { formatBRL, monthNames, localDateString, formatDateBR } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck } from "lucide-react";
+import { TrendingUp, TrendingDown, Wallet, AlertCircle, CalendarClock, Sparkles, Landmark, ChevronRight, Receipt, Target, ShieldCheck } from "lucide-center";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ChatPanel } from "@/components/chat/ChatPanel";
@@ -68,7 +68,6 @@ function Dashboard() {
     enabled: !!user,
   });
 
-  // Vinculação manual de dados para o Dashboard
   const tx = useMemo(() => {
     if (!data) return [];
     return data.transactions.map((t: any) => ({
@@ -78,9 +77,8 @@ function Dashboard() {
     }));
   }, [data]);
 
-  const validTx = tx.filter((t: any) => t.type !== "transfer");
-  const income = validTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
-  const expense = validTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const income = tx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const expense = tx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + Number(t.amount), 0);
   const balance = income - expense;
   
   const cashAccounts = (data?.accounts ?? []).filter((a: any) => a.type !== "credit_card");
@@ -109,7 +107,6 @@ function Dashboard() {
   }, [data]);
 
   const totalCardDebt = (data?.openInvoices ?? []).reduce((sum: number, inv: any) => {
-    // Como não temos join aqui, o total_amount da fatura já deve estar atualizado pelo trigger
     return sum + Number(inv.total_amount || 0);
   }, 0);
 
@@ -126,16 +123,16 @@ function Dashboard() {
     return counts;
   }, [data]);
 
-  const cardExpense = validTx.filter((t: any) => 
+  const cardExpense = tx.filter((t: any) => 
     t.type === "expense" && 
     (t.accounts?.type === "credit_card" || t.invoice_id)
   ).reduce((s: number, t: any) => s + Number(t.amount), 0);
   
-  const fixedExpense = validTx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
+  const fixedExpense = tx.filter((t: any) => t.type === "expense" && t.fixed_bill_id).reduce((s: number, t: any) => s + Number(t.amount), 0);
   const variableExpense = expense - cardExpense - fixedExpense;
 
   const byCategory: Record<string, { name: string; icon?: string; total: number }> = {};
-  validTx.filter((t: any) => t.type === "expense").forEach((t: any) => {
+  tx.filter((t: any) => t.type === "expense").forEach((t: any) => {
     const k = t.category_id ?? "none";
     const name = t.categories?.name ?? "Sem categoria";
     const icon = t.categories?.icon;
@@ -153,12 +150,12 @@ function Dashboard() {
   const projection = useMemo(() => {
     if (!data) return [];
     const now = new Date();
-    const months: { label: string; month: number; year: number; recurring: number; installments: number; invoices: number; total: number }[] = [];
+    const months: { label: string; month: number; year: number; fixedExpenses: number; installments: number; invoices: number; total: number }[] = [];
     for (let i = 0; i < 3; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const m = d.getMonth() + 1;
       const y = d.getFullYear();
-      const recurring = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
+      const fixedExpenses = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
       const installments = (data.futureTx as any[])
         .filter((t) => {
           const td = new Date(t.occurred_on + "T12:00:00");
@@ -173,10 +170,10 @@ function Dashboard() {
         label: `${monthNames[m - 1]}/${String(y).slice(2)}`,
         month: m,
         year: y,
-        recurring,
+        fixedExpenses,
         installments,
         invoices,
-        total: recurring + installments + invoices,
+        total: fixedExpenses + installments + invoices,
       });
     }
     return months;
@@ -301,19 +298,19 @@ function Dashboard() {
 
       {/* PROJEÇÃO 3 MESES */}
       <DashboardCard title="Projeção dos próximos meses" icon={CalendarClock}>
-        <p className="text-xs text-muted-foreground mb-4">Soma de recorrentes ativas, parcelas futuras e faturas em aberto.</p>
+        <p className="text-xs text-muted-foreground mb-4">Soma de despesas fixas ativas, parcelas futuras e faturas em aberto.</p>
         <div className="grid grid-cols-3 gap-3">
           {projection.map((p) => (
             <div key={`${p.year}-${p.month}`} className="rounded-xl border border-border bg-surface-2 p-3 md:p-4">
               <div className="text-xs text-muted-foreground capitalize">{p.label}</div>
               <div className="font-mono tabular text-lg md:text-xl font-bold mt-1">{formatBRL(p.total)}</div>
               <div className="mt-3 h-1.5 rounded-full bg-surface-3 overflow-hidden flex">
-                <div className="h-full bg-audit-yellow" style={{ width: `${(p.recurring / Math.max(1, p.total)) * 100}%` }} />
+                <div className="h-full bg-audit-yellow" style={{ width: `${(p.fixedExpenses / Math.max(1, p.total)) * 100}%` }} />
                 <div className="h-full bg-expense" style={{ width: `${(p.invoices / Math.max(1, p.total)) * 100}%` }} />
                 <div className="h-full bg-primary" style={{ width: `${(p.installments / Math.max(1, p.total)) * 100}%` }} />
               </div>
               <div className="mt-2 space-y-0.5 text-[10px] md:text-xs text-muted-foreground">
-                <div className="flex justify-between"><span>● Recorrentes</span><span className="font-mono">{formatBRL(p.recurring)}</span></div>
+                <div className="flex justify-between"><span>● Desp. Fixas</span><span className="font-mono">{formatBRL(p.fixedExpenses)}</span></div>
                 <div className="flex justify-between"><span>● Faturas</span><span className="font-mono">{formatBRL(p.invoices)}</span></div>
                 <div className="flex justify-between"><span>● Parcelas</span><span className="font-mono">{formatBRL(p.installments)}</span></div>
               </div>
@@ -330,7 +327,7 @@ function Dashboard() {
               <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-surface-2 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-8 w-8 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-                    {t.categories?.icon || "📦"}
+                    {t.type === 'transfer' ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.description}</div>
@@ -339,9 +336,9 @@ function Dashboard() {
                 </div>
                 <div className={cn(
                   "font-mono tabular text-sm font-semibold", 
-                  t.type === "income" ? "text-income" : t.type === "expense" ? "text-expense" : "text-muted-foreground"
+                  t.type === 'transfer' ? "text-muted-foreground" : (t.type === "income" ? "text-income" : "text-expense")
                 )}>
-                  {t.type === "income" ? "+" : t.type === "expense" ? "-" : ""}{formatBRL(Number(t.amount))}
+                  {t.type === 'transfer' ? "" : (t.type === "income" ? "+" : "-")}{formatBRL(Number(t.amount))}
                 </div>
               </div>
             ))}
@@ -381,7 +378,7 @@ function Dashboard() {
             </div>
           </DashboardCard>
 
-          <DashboardCard title="Recorrentes pendentes">
+          <DashboardCard title="Despesas Fixas pendentes">
             {pending.length === 0 && <div className="text-sm text-muted-foreground py-2">Tudo em dia neste mês ✓</div>}
             <div className="space-y-2">
               {pending.map((b: any) => {

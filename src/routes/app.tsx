@@ -30,7 +30,7 @@ function AppLayout() {
     { to: "/app/accounts", label: "Contas e Cartões", icon: Wallet },
     { to: "/app/invoices", label: "Faturas", icon: CreditCard },
     { to: "/app/installments", label: "Parcelamentos", icon: CalendarRange },
-    { to: "/app/bills", label: "Recorrentes", icon: ListChecks },
+    { to: "/app/bills", label: "Despesas Fixas", icon: ListChecks },
     { to: "/app/investments", label: "Investimentos", icon: TrendingUp },
     { to: "/app/goals", label: "Metas", icon: Target },
     { to: "/app/reports", label: "Relatórios", icon: BarChart3 },

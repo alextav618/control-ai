@@ -26,8 +26,8 @@ function BillsPage() {
   const [payAmount, setPayAmount] = useState("");
   const ref = currentMonthYear();
 
-  const { data: bills = [] } = useQuery({
-    queryKey: ["bills", user?.id],
+  const { data: fixedExpenses = [] } = useQuery({
+    queryKey: ["fixed-bills", user?.id],
     queryFn: async () => {
       const { data, error } = await supabase.from("fixed_bills").select("*").eq("active", true).order("due_day");
       if (error) {
@@ -95,10 +95,10 @@ function BillsPage() {
       console.error('Erro Supabase (create fixed_bill):', error);
       toast.error(error.message);
     } else {
-      toast.success("Recorrente criada");
+      toast.success("Despesa fixa criada");
       setOpen(false);
       setForm({ name: "", expected_amount: "", due_day: "", amount_kind: "fixed", category_id: "", default_account_id: "" });
-      qc.invalidateQueries({ queryKey: ["bills"] });
+      qc.invalidateQueries({ queryKey: ["fixed-bills"] });
     }
   };
 
@@ -108,8 +108,8 @@ function BillsPage() {
       console.error('Erro Supabase (archive fixed_bill):', error);
       toast.error(error.message);
     } else { 
-      toast.success("Removida"); 
-      qc.invalidateQueries({ queryKey: ["bills"] }); 
+      toast.success("Despesa removida"); 
+      qc.invalidateQueries({ queryKey: ["fixed-bills"] }); 
     }
   };
 
@@ -154,7 +154,7 @@ function BillsPage() {
       console.error('Erro Supabase (upsert occurrence):', occErr);
       toast.error(occErr.message);
     } else {
-      toast.success("Lançado");
+      toast.success("Lançamento confirmado");
       setPayOpen(null);
       setPayAmount("");
       qc.invalidateQueries({ queryKey: ["occs"] });
@@ -166,11 +166,11 @@ function BillsPage() {
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto animate-in fade-in duration-300">
       <div className="flex items-center justify-between mb-2">
-        <h1 className="font-display text-2xl md:text-3xl font-bold">Recorrentes</h1>
+        <h1 className="font-display text-2xl md:text-3xl font-bold">Despesas Fixas</h1>
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Nova</Button></DialogTrigger>
+          <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Nova Despesa</Button></DialogTrigger>
           <DialogContent>
-            <DialogHeader><DialogTitle>Nova despesa recorrente</DialogTitle></DialogHeader>
+            <DialogHeader><DialogTitle>Nova despesa fixa</DialogTitle></DialogHeader>
             <div className="space-y-4">
               <div><Label>Nome</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Energia elétrica" className="mt-1.5" /></div>
               <div className="grid grid-cols-2 gap-3">
@@ -209,7 +209,7 @@ function BillsPage() {
                   </Select>
                 </div>
               </div>
-              <Button onClick={create} className="w-full">Criar</Button>
+              <Button onClick={create} className="w-full">Cadastrar</Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -217,9 +217,9 @@ function BillsPage() {
       <p className="text-sm text-muted-foreground mb-6">{monthNames[ref.month - 1]} de {ref.year}</p>
 
       <div className="rounded-2xl border border-border bg-surface-1 overflow-hidden">
-        {bills.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nada cadastrado. A IA também pode criar pelo chat.</div>}
+        {fixedExpenses.length === 0 && <div className="p-8 text-center text-muted-foreground text-sm">Nenhuma despesa fixa cadastrada. A IA também pode criar pelo chat.</div>}
         <div className="divide-y divide-border">
-          {bills.map((b: any) => {
+          {fixedExpenses.map((b: any) => {
             const occ = occByBill.get(b.id);
             const paid = occ?.status === "paid";
             const isVar = b.amount_kind === "variable";

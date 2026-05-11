@@ -46,7 +46,7 @@ function InsightsPage() {
       return {
         tx: txR.data ?? [],
         lastTx: lmR.data ?? [],
-        bills: billsR.data ?? [],
+        fixedBills: billsR.data ?? [],
         invoices: invR.data ?? [],
         profile: profR.data,
         accounts: accR.data ?? [],
@@ -59,18 +59,14 @@ function InsightsPage() {
   const insights = useMemo<Insight[]>(() => {
     if (!data) return [];
     const out: Insight[] = [];
-    const tx = data.tx as any[];
-    const lastTx = data.lastTx as any[];
+    const tx = (data.tx as any[]).filter(t => t.type !== 'transfer');
+    const lastTx = (data.lastTx as any[]).filter(t => t.type !== 'transfer');
 
-    const validTx = tx.filter(t => t.type !== "transfer");
-    const validLastTx = lastTx.filter(t => t.type !== "transfer");
-
-    const expense = validTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-    const income = validTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
-    const lastExpense = validLastTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+    const expense = tx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+    const income = tx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+    const lastExpense = lastTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
     const balance = income - expense;
 
-    // Saldo positivo
     if (income > 0 && balance > 0 && balance / income > 0.2) {
       out.push({
         level: "praise",
@@ -79,7 +75,6 @@ function InsightsPage() {
       });
     }
 
-    // Despesa subiu vs mês anterior
     if (lastExpense > 0 && expense > lastExpense * 1.2) {
       out.push({
         level: "warning",
@@ -94,9 +89,8 @@ function InsightsPage() {
       });
     }
 
-    // Categorias dominantes
     const byCat: Record<string, { name: string; total: number }> = {};
-    validTx.filter(t => t.type === "expense").forEach((t: any) => {
+    tx.filter(t => t.type === "expense").forEach((t: any) => {
       const k = t.category_id ?? "none";
       const name = t.categories?.name ?? "Sem categoria";
       byCat[k] = byCat[k] ?? { name, total: 0 };
@@ -111,7 +105,6 @@ function InsightsPage() {
       });
     }
 
-    // Faturas em aberto somadas
     const openInvTotal = (data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0);
     const cashTotal = (data.accounts as any[]).filter(a => a.type !== "credit_card").reduce((s, a) => s + Number(a.current_balance), 0);
     if (openInvTotal > 0 && openInvTotal > cashTotal) {
@@ -122,7 +115,6 @@ function InsightsPage() {
       });
     }
 
-    // Itens de fatura sem categorização
     const itemsWithoutCategory = (data.invoiceItems as any[]).filter(i => !i.category_id).length;
     if (itemsWithoutCategory >= 3) {
       out.push({
@@ -132,7 +124,6 @@ function InsightsPage() {
       });
     }
 
-    // Sem categoria em transações
     const noCat = tx.filter((t: any) => t.type === "expense" && !t.category_id).length;
     if (noCat >= 3) {
       out.push({
@@ -142,7 +133,6 @@ function InsightsPage() {
       });
     }
 
-    // Auditoria vermelha
     const reds = tx.filter((t: any) => t.audit_level === "red").length;
     if (reds > 0) {
       out.push({
@@ -152,7 +142,6 @@ function InsightsPage() {
       });
     }
 
-    // Orçamento
     if (data.profile?.monthly_budget && expense > Number(data.profile.monthly_budget)) {
       out.push({
         level: "alert",
@@ -161,7 +150,6 @@ function InsightsPage() {
       });
     }
 
-    // Total de itens em faturas
     const totalItemsValue = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);
     if (totalItemsValue > 0 && totalItemsValue > expense * 0.3) {
       out.push({
@@ -171,7 +159,6 @@ function InsightsPage() {
       });
     }
 
-    // Tudo zen
     if (out.length === 0) {
       out.push({
         level: "praise",
@@ -193,22 +180,15 @@ function InsightsPage() {
     setAiLoading(true);
     setAiText(null);
     try {
-      const tx = data.tx as any[];
-      const validTx = tx.filter(t => t.type !== "transfer");
-      const expense = validTx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
-      const income = validTx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+      const tx = (data.tx as any[]).filter(t => t.type !== 'transfer');
+      const expense = tx.filter(t => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+      const income = tx.filter(t => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
       const itemsTotal = (data.invoiceItems as any[]).reduce((s, i) => s + Number(i.amount), 0);
-            const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Itens de fatura: ${formatBRL(itemsTotal)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
-
+      const summary = `Receita: ${formatBRL(income)}. Despesa: ${formatBRL(expense)}. Saldo: ${formatBRL(income - expense)}. Itens de fatura: ${formatBRL(itemsTotal)}. Faturas em aberto somam ${formatBRL((data.invoices as any[]).filter(i => i.status !== "paid").reduce((s, i) => s + Number(i.total_amount), 0))}.`;
       const { data: resp, error } = await supabase.functions.invoke("chat-ai", {
-        body: {
-          text: `Faça uma análise financeira pessoal curta (máx 6 linhas) e direta sobre meu mês: ${summary} Não registre nada, apenas avalie e dê 1 dica prática.`,
-          history: [],
-        },
+        body: { text: `Faça uma análise financeira pessoal curta (máx 6 linhas) e direta sobre meu mês: ${summary} Não registre nada, apenas avalie e dê 1 dica prática.`, history: [] },
       });
-
       if (error) throw error;
-
       setAiText(resp?.message ?? "Sem retorno.");
     } catch (e: any) {
       toast.error("Não foi possível consultar a IA agora.");
@@ -217,64 +197,34 @@ function InsightsPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <div className="p-6 text-muted-foreground">
-        Carregando insights...
-      </div>
-    );
-  }
+  if (isLoading) return <div className="p-6 text-muted-foreground">Carregando insights...</div>;
 
   const now = new Date();
-
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto animate-in fade-in duration-300 space-y-6">
       <div>
         <h1 className="font-display text-2xl md:text-3xl font-bold flex items-center gap-2">
-          <Sparkles className="h-6 w-6 text-primary" />
-          Insights
+          <Sparkles className="h-6 w-6 text-primary" /> Insights
         </h1>
-
-        <p className="text-sm text-muted-foreground mt-1">
-          {monthNames[now.getMonth()]} de {now.getFullYear()} · análise automática
-        </p>
+        <p className="text-sm text-muted-foreground mt-1">{monthNames[now.getMonth()]} de {now.getFullYear()} · análise automática</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-3 md:gap-4">
-        {insights.map((it, i) => (
-          <InsightCard key={i} insight={it} />
-        ))}
+        {insights.map((it, i) => <InsightCard key={i} insight={it} />)}
       </div>
 
       <div className="rounded-2xl border border-border bg-surface-1 p-4 md:p-6 shadow-card">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h2 className="font-display font-semibold flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
-              Avaliação da IA
-            </h2>
-
-            <p className="text-xs text-muted-foreground mt-1">
-              Peça uma análise narrativa em linguagem natural sobre o seu mês.
-            </p>
+            <h2 className="font-display font-semibold flex items-center gap-2"><Sparkles className="h-4 w-4 text-primary" /> Avaliação da IA</h2>
+            <p className="text-xs text-muted-foreground mt-1">Peça uma análise narrativa em linguagem natural sobre o seu mês.</p>
           </div>
-
           <Button onClick={askAi} disabled={aiLoading} variant="outline">
-            {aiLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Analisando...
-              </>
-            ) : (
-              "Pedir avaliação"
-            )}
+            {aiLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Analisando...</> : "Pedir avaliação"}
           </Button>
         </div>
-
         {aiText && (
-          <div className="mt-4 rounded-xl bg-surface-2 border border-border p-4 text-sm whitespace-pre-wrap leading-relaxed">
-            {aiText}
-          </div>
+          <div className="mt-4 rounded-xl bg-surface-2 border border-border p-4 text-sm whitespace-pre-wrap leading-relaxed">{aiText}</div>
         )}
       </div>
     </div>
@@ -283,54 +233,21 @@ function InsightsPage() {
 
 function InsightCard({ insight }: { insight: Insight }) {
   const meta = {
-    praise: {
-      Icon: ThumbsUp,
-      color: "text-audit-green",
-      bg: "bg-audit-green/10",
-      border: "border-audit-green/30",
-    },
-    tip: {
-      Icon: Lightbulb,
-      color: "text-primary",
-      bg: "bg-primary/10",
-      border: "border-primary/30",
-    },
-    warning: {
-      Icon: AlertTriangle,
-      color: "text-audit-yellow",
-      bg: "bg-audit-yellow/10",
-      border: "border-audit-yellow/30",
-    },
-    alert: {
-      Icon: TrendingDown,
-      color: "text-audit-red",
-      bg: "bg-audit-red/10",
-      border: "border-audit-red/30",
-    },
+    praise:  { Icon: ThumbsUp,        color: "text-audit-green",  bg: "bg-audit-green/10",  border: "border-audit-green/30" },
+    tip:     { Icon: Lightbulb,       color: "text-primary",      bg: "bg-primary/10",      border: "border-primary/30" },
+    warning: { Icon: AlertTriangle,   color: "text-audit-yellow", bg: "bg-audit-yellow/10", border: "border-audit-yellow/30" },
+    alert:   { Icon: TrendingDown,    color: "text-audit-red",    bg: "bg-audit-red/10",    border: "border-audit-red/30" },
   }[insight.level];
-
   const Icon = meta.Icon;
-
   return (
     <div className={cn("rounded-2xl border p-4 md:p-5 shadow-card", meta.bg, meta.border)}>
       <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            "h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-background/50",
-            meta.color
-          )}
-        >
+        <div className={cn("h-9 w-9 rounded-lg flex items-center justify-center shrink-0 bg-background/50", meta.color)}>
           <Icon className="h-4 w-4" />
         </div>
-
         <div className="min-w-0">
-          <h3 className="font-display font-semibold leading-tight">
-            {insight.title}
-          </h3>
-
-          <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">
-            {insight.body}
-          </p>
+          <h3 className="font-display font-semibold leading-tight">{insight.title}</h3>
+          <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed">{insight.body}</p>
         </div>
       </div>
     </div>

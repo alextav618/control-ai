@@ -30,6 +30,7 @@ DIRETRIZES:
 REGRAS DE NEGÓCIO:
 - Analise gastos contra o orçamento mensal.
 - Identifique padrões de consumo.
+- DESPESAS FIXAS: Referem-se a gastos recorrentes (ex: aluguel, luz, assinaturas). Use o termo 'Despesa Fixa' em vez de 'Recorrente'.
 - TRANSFERÊNCIAS: Movimentações entre contas do usuário (ex: Pix para si mesmo, pagamento de fatura) são do tipo 'transfer'.
 - Uma 'transfer' deve ter 'account_id' (origem) e 'to_account_id' (destino).
 - Transferências NÃO são receita nem despesa e não afetam o fluxo de caixa real, apenas o saldo das contas envolvidas.`;
@@ -201,7 +202,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
-      // Preparar contexto para a IA
       const today = "2026-05-08";
       let ctxText = `=== CONTEXTO ATUAL ===\nData de hoje: ${today}\n`;
       if (contextData?.profile?.display_name) ctxText += `Usuário: ${contextData.profile.display_name}\n`;
@@ -216,7 +216,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       const contents: any[] = [];
       
-      // Primeira mensagem com as regras (Prompt Mestre)
       contents.push({
         role: "user",
         parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
@@ -227,7 +226,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
       });
 
-      // Histórico
       messages.slice(-10).forEach((m) => {
         contents.push({
           role: m.role === "assistant" ? "model" : "user",
@@ -235,7 +233,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         });
       });
 
-      // Mensagem atual
       const currentParts: any[] = [];
       if (text) currentParts.push({ text });
       if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
@@ -243,7 +240,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      // Chamada com Fallback
       let result;
       try {
         result = await callGemini(contents, "gemini-2.5-flash");
@@ -430,7 +426,7 @@ function ActionCard({ action }: { action: any }) {
     );
   }
   if (action.type === "account") return <Tag>Conta criada: {action.account.name}</Tag>;
-  if (action.type === "fixed_bill") return <Tag>Conta fixa: {action.bill.name}</Tag>;
+  if (action.type === "fixed_bill") return <Tag>Despesa fixa: {action.bill.name}</Tag>;
   if (action.type === "error") return <div className="text-xs text-destructive">⚠ {action.message}</div>;
   return null;
 }
