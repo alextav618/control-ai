@@ -13,10 +13,15 @@ import { KpiCard } from "@/components/dashboard/KpiCard";
 import { BreakdownCard } from "@/components/dashboard/BreakdownCard";
 import { DashboardCard } from "@/components/dashboard/DashboardCard";
 import { Progress } from "@/components/ui/progress";
+import { differenceInMonths, startOfMonth } from "date-fns";
 
 export const Route = createFileRoute("/app/dashboard")({
   component: Dashboard,
 });
+
+const FREQ_INTERVALS: Record<string, number> = {
+  monthly: 1, bimonthly: 2, quarterly: 3, semiannual: 6, annual: 12
+};
 
 function Dashboard() {
   const { user } = useAuth();
@@ -151,17 +156,34 @@ function Dashboard() {
     if (!data) return [];
     const now = new Date();
     const months: { label: string; month: number; year: number; fixedExpenses: number; installments: number; invoices: number; total: number }[] = [];
+    
     for (let i = 0; i < 3; i++) {
       const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
       const m = d.getMonth() + 1;
       const y = d.getFullYear();
-      const fixedExpenses = (data.bills as any[]).reduce((s, b) => s + Number(b.expected_amount || 0), 0);
+      const targetMonthStart = startOfMonth(d);
+
+      // Despesas Fixas Inteligentes: Filtra por frequência
+      const fixedExpenses = (data.bills as any[]).reduce((s, b) => {
+        const start = new Date(b.start_date + "T12:00:00");
+        const diff = differenceInMonths(targetMonthStart, startOfMonth(start));
+        if (diff < 0) return s;
+        
+        const interval = FREQ_INTERVALS[b.frequency || "monthly"] || 1;
+        if (diff % interval !== 0) return s; // Não cai nesse mês
+        
+        if (b.total_installments && (diff / interval) >= b.total_installments) return s; // Já acabou
+        
+        return s + Number(b.expected_amount || 0);
+      }, 0);
+
       const installments = (data.futureTx as any[])
         .filter((t) => {
           const td = new Date(t.occurred_on + "T12:00:00");
           return t.type === "expense" && t.installment_plan_id && td.getMonth() + 1 === m && td.getFullYear() === y;
         })
         .reduce((s, t) => s + Number(t.amount), 0);
+
       const invoices = (data.openInvoices as any[])
         .filter((inv) => inv.reference_month === m && inv.reference_year === y)
         .reduce((s, inv) => s + Number(inv.total_amount || 0), 0);
@@ -179,8 +201,8 @@ function Dashboard() {
     return months;
   }, [data]);
 
-  const now = new Date();
-  const monthLabel = `${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
+  const nowRef = new Date();
+  const monthLabel = `${monthNames[nowRef.getMonth()]} de ${nowRef.getFullYear()}`;
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
@@ -327,7 +349,7 @@ function Dashboard() {
               <div key={t.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-surface-2 transition-colors">
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="h-8 w-8 rounded-lg bg-surface-3 flex items-center justify-center shrink-0 text-lg">
-                    {t.type === 'transfer' ? <ArrowRightLeft className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
+                    {t.type === 'transfer' ? <TrendingUp className="h-4 w-4 text-primary" /> : (t.categories?.icon || "📦")}
                   </div>
                   <div className="min-w-0">
                     <div className="font-medium text-sm truncate">{t.description}</div>
