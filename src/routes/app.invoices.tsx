@@ -180,20 +180,16 @@ function InvoicesPage() {
   const handleOpenRevert = async (inv: any) => {
   setRevertInv(inv);
   
-  console.log("invoice account_id:", inv.account_id);
-  
   const { data: payTx, error } = await supabase
     .from("transactions")
-    .select("*, accounts!transactions_account_id_fkey(name)")
+    .select("id, amount, account_id, occurred_on")
     .eq("to_account_id", inv.account_id)
     .eq("type", "transfer")
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
-  console.log("payTx encontrado:", payTx);
-  console.log("erro:", error);
-
+  console.log("payTx:", payTx, "erro:", error);
   setPayTxToRevert(payTx);
 };
 
