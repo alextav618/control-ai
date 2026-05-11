@@ -48,17 +48,21 @@ const SpendingChart = ({ data }: SpendingChartProps) => {
             tickFormatter={(value) => `R$ ${value}`}
           />
           <Tooltip
-            cursor={{ fill: "var(--surface-2)" }}
-            contentStyle={{
-              backgroundColor: "var(--surface-1)",
-              borderColor: "var(--border)",
-              borderRadius: "12px",
-              fontSize: "12px",
-              color: "var(--foreground)",
-            }}
-            formatter={(value: number) => [formatBRL(value), "Gasto"]}
-            labelStyle={{ fontWeight: "bold", marginBottom: "4px", color: "var(--foreground)" }} // Cor clara para o label também
-          />
+  cursor={{ fill: "var(--surface-2)" }}
+  contentStyle={{
+    backgroundColor: "var(--surface-1)",
+    borderColor: "var(--border)",
+    borderRadius: "12px",
+    fontSize: "12px",
+    color: "hsl(var(--foreground))",
+  }}
+  formatter={(value: number) => [formatBRL(value), "Gasto"]}
+  labelStyle={{
+    fontWeight: "bold",
+    marginBottom: "4px",
+    color: "hsl(var(--foreground))",
+  }}
+/>
           <Bar dataKey="total" radius={[6, 6, 0, 0]} strokeWidth={0} barSize={8}> {/* barSize ajustado para 1/4 do tamanho */}
             {data.map((entry, index) => (
               <Cell
