@@ -180,6 +180,10 @@ function InvoicesPage() {
   const handleOpenRevert = async (inv: any) => {
   setRevertInv(inv);
 
+  console.log("paid_at:", inv.paid_at);
+  console.log("paid_at slice:", inv.paid_at?.slice(0, 10));
+  console.log("account_id:", inv.account_id);
+
   const { data: payTx } = await supabase
     .from("transactions")
     .select("id, amount, account_id, occurred_on")
