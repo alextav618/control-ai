@@ -195,51 +195,35 @@ function InvoicesPage() {
    * REVERSÃO EXPLÍCITA: Estorno manual de saldo e exclusão de transação.
    */
   const confirmRevert = async () => {
-    if (!revertInv) return;
-    setIsReverting(true);
-    try {
-      const targetAccountId = payTxToRevert?.account_id;
-      const amount = Number(revertInv.total_amount);
-
-      // 1. ESTORNO EXPLÍCITO DE SALDO
-      if (targetAccountId) {
-        const { data: acc, error: fetchErr } = await supabase.from("accounts").select("current_balance, name").eq("id", targetAccountId).single();
-        if (fetchErr) throw new Error("Não foi possível verificar o saldo da conta.");
-
-        const newBalance = Number(acc.current_balance) + amount;
-        const { error: upErr } = await supabase.from("accounts").update({ current_balance: newBalance }).eq("id", targetAccountId);
-        
-        if (upErr) throw new Error(`Falha ao atualizar saldo: ${upErr.message}`);
-        console.log(`Reversão concluída: +${formatBRL(amount)} para a conta ${acc.name}`);
-      }
-
-      // 2. EXCLUSÃO DA TRANSAÇÃO
-      if (payTxToRevert?.id) {
-        await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
-      }
-      
-      // 3. ATUALIZA STATUS DA FATURA
-      const { error: invErr } = await supabase.from("invoices").update({ status: "open", paid_at: null }).eq("id", revertInv.id);
-      if (invErr) throw invErr;
-      
-      toast.success("Fatura revertida e saldo estornado com sucesso!");
-      
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["invoices"] }),
-        qc.invalidateQueries({ queryKey: ["accounts"] }),
-        qc.invalidateQueries({ queryKey: ["transactions"] }),
-        qc.invalidateQueries({ queryKey: ["dashboard"] })
-      ]);
-
-    } catch (e: any) {
-      console.error("[Revert Error]", e);
-      toast.error(`Erro na operação: ${e.message}`);
-    } finally {
-      setIsReverting(false);
-      setRevertInv(null);
-      setPayTxToRevert(null);
+  if (!revertInv) return;
+  setIsReverting(true);
+  try {
+    // O trigger já devolve o saldo automaticamente ao deletar a transação
+    if (payTxToRevert?.id) {
+      const { error } = await supabase.from("transactions").delete().eq("id", payTxToRevert.id);
+      if (error) throw error;
     }
-  };
+
+    const { error: invErr } = await supabase.from("invoices")
+      .update({ status: "open", paid_at: null })
+      .eq("id", revertInv.id);
+    if (invErr) throw invErr;
+
+    toast.success("Fatura revertida com sucesso!");
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["invoices"] }),
+      qc.invalidateQueries({ queryKey: ["accounts"] }),
+      qc.invalidateQueries({ queryKey: ["transactions"] }),
+      qc.invalidateQueries({ queryKey: ["dashboard"] }),
+    ]);
+  } catch (e: any) {
+    toast.error(`Erro: ${e.message}`);
+  } finally {
+    setIsReverting(false);
+    setRevertInv(null);
+    setPayTxToRevert(null);
+  }
+};
 
   const confirmPay = async () => {
   if (!user || !payInv || !payAccount) return;
