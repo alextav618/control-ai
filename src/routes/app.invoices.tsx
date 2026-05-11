@@ -178,19 +178,35 @@ function InvoicesPage() {
   };
 
   const handleOpenRevert = async (inv: any) => {
-    setRevertInv(inv);
-    const { data: payTx } = await supabase
+  setRevertInv(inv);
+  
+  // Busca pelo to_account_id e valor, sem depender do nome
+  const { data: payTx } = await supabase
+    .from("transactions")
+    .select("*, accounts!transactions_account_id_fkey(name)")
+    .eq("to_account_id", inv.account_id)
+    .eq("type", "transfer")
+    .eq("amount", inv.total_amount)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Se não achar pelo valor exato, tenta só pelo to_account_id
+  if (!payTx) {
+    const { data: payTxFallback } = await supabase
       .from("transactions")
       .select("*, accounts!transactions_account_id_fkey(name)")
       .eq("to_account_id", inv.account_id)
       .eq("type", "transfer")
-      .eq("amount", inv.total_amount)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
     
+    setPayTxToRevert(payTxFallback);
+  } else {
     setPayTxToRevert(payTx);
-  };
+  }
+};
 
   /**
    * REVERSÃO EXPLÍCITA: Estorno manual de saldo e exclusão de transação.
