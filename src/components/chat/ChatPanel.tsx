@@ -180,7 +180,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      // Chamada direta à API do Gemini 2.0 Flash
+      // Chamada direta à API do Gemini 2.5-flash
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
       
