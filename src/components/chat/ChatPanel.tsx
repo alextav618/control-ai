@@ -219,7 +219,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       contents.push({ role: "user", parts: currentParts });
 
       // Fallback para chave hardcoded se a variável de ambiente falhar
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
       
       // Log solicitado para depuração
       console.log("Chave sendo usada:", apiKey?.slice(0, 10));
