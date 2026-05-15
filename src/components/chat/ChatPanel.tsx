@@ -223,7 +223,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       // Fallback para chave hardcoded se a variável de ambiente falhar
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${apiKey}`;
       
       const response = await fetch(url, {
         method: "POST",
