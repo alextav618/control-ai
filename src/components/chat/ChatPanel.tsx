@@ -224,7 +224,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       // Log solicitado para depuração
       console.log("Chave sendo usada:", apiKey?.slice(0, 10));
 
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${apiKey}`;
       
       const response = await fetch(url, {
         method: "POST",
