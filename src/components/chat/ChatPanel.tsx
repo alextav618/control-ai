@@ -103,34 +103,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       r.readAsDataURL(blob);
     });
 
-  const callGemini = async (contents: any[], modelId: string): Promise<any> => {
-    // Temporariamente usando a chave direta para teste conforme solicitado
-    const apiKey = "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
-    console.log("API KEY (env):", import.meta.env.VITE_GEMINI_API_KEY);
-    console.log("Using Hardcoded Key for test:", apiKey);
-    
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
-    
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contents }),
-    });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error(`[Gemini Error] Status: ${response.status}`, errorData);
-      
-      if (response.status === 429) {
-        throw new Error("Limite de requisições atingido. Tente novamente em alguns segundos.");
-      }
-      
-      throw { status: response.status, message: errorData.error?.message || "Erro na API do Gemini" };
-    }
-
-    return response.json();
-  };
-
   const send = async () => {
     if (!user) return;
     if (!text.trim() && !imageData && !audioBlob) return;
@@ -186,11 +158,13 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       const contents: any[] = [];
       
+      // Contexto como primeira mensagem do tipo user
       contents.push({
         role: "user",
         parts: [{ text: ASSISTANT_CONTEXT }]
       });
 
+      // Histórico (últimas 10 mensagens)
       messages.slice(-10).forEach((m) => {
         contents.push({
           role: m.role === "assistant" ? "model" : "user",
@@ -198,6 +172,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         });
       });
 
+      // Mensagem atual com anexos
       const currentParts: any[] = [];
       if (text) currentParts.push({ text });
       if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
@@ -205,18 +180,31 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      let result;
-      try {
-        result = await callGemini(contents, "gemini-2.0-flash");
-      } catch (e: any) {
-        if (e.status === 404) {
-          result = await callGemini(contents, "gemini-1.5-flash");
-        } else {
-          throw e;
+      // Chamada direta à API do Gemini 2.0 Flash
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+      
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`[Gemini Error] Status: ${response.status}`, errorData);
+        
+        if (response.status === 429) {
+          throw new Error("Limite de requisições atingido. Tente novamente em alguns segundos.");
         }
+        
+        throw new Error(errorData.error?.message || "Erro na API do Gemini");
       }
 
-      const assistantText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
+      const data = await response.json();
+      console.log("Resposta da API:", data);
+
+      const assistantText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
       
       const { data: aMsg, error: aInsErr } = await supabase
         .from("chat_messages")
