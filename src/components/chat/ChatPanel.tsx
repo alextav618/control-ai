@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Mic, Send, Image as ImageIcon, Loader2, X, Square } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatBRL } from "@/lib/format";
 
 type Msg = {
   id: string;
@@ -18,14 +19,17 @@ type Msg = {
   created_at: string;
 };
 
-const ASSISTANT_CONTEXT = "No arquivo src/components/chat/ChatPanel.tsx, atualize o prompt do sistema que é enviado ao Gemini com o seguinte texto exato (substitua o prompt atual pelo abaixo):
-Você é o assistente financeiro do IControl IA. Aqui estão os dados financeiros atuais do usuário:
+const buildSystemPrompt = (accounts: any[], transactions: any[]) => {
+  const accountsList = accounts.map(a => `- \${a.name} (\${a.type}): \${formatBRL(a.current_balance)}`).join("\n");
+  const txList = transactions.slice(0, 20).map(t => `- \${t.occurred_on}: \${t.description} (\${t.type}) \${formatBRL(t.amount)}`).join("\n");
+
+  return `Você é o assistente financeiro do IControl IA. Aqui estão os dados financeiros atuais do usuário:
 
 CONTAS:
-[inserir contas dinamicamente]
+\${accountsList || "Nenhuma conta cadastrada."}
 
 ÚLTIMAS TRANSAÇÕES:
-[inserir transações dinamicamente]
+\${txList || "Nenhuma transação recente."}
 
 Regras de comportamento:
 - Seja sempre resumido, máximo 3 linhas por resposta
@@ -35,8 +39,8 @@ Regras de comportamento:
 - Quando o usuário registrar uma RECEITA ou INVESTIMENTO, comemore com entusiasmo e incentive a continuar
 - Quando o usuário perguntar sobre suas finanças, responda com base nos dados reais das contas e transações acima
 - Fale em português brasileiro de forma descontraída mas profissional
-- Nunca invente dados que não estejam no contexto fornecido
-Certifique-se que esse prompt é injetado dinamicamente com os dados reais do Supabase (contas e últimas 20 transações) antes de cada chamada à API do Gemini.";
+- Nunca invente dados que não estejam no contexto fornecido`;
+};
 
 export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
   const { user } = useAuth();
@@ -61,6 +65,24 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         .limit(200);
       if (error) throw error;
       return data as Msg[];
+    },
+    enabled: !!user,
+  });
+
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["accounts", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
+      return data ?? [];
+    },
+    enabled: !!user,
+  });
+
+  const { data: transactions = [] } = useQuery({
+    queryKey: ["transactions", user?.id],
+    queryFn: async () => {
+      const { data } = await supabase.from("transactions").select("*").order("occurred_on", { ascending: false }).limit(20);
+      return data ?? [];
     },
     enabled: !!user,
   });
@@ -135,7 +157,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       if (imageData) {
         const blob = await (await fetch(imageData.base64)).blob();
         const ext = blob.type.split("/")[1] ?? "jpg";
-        const path = `${user.id}/${Date.now()}.${ext}`;
+        const path = `\${user.id}/\${Date.now()}.\${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, blob);
         if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
@@ -147,7 +169,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       if (audioBlob) {
         const ext = audioBlob.type.includes("webm") ? "webm" : "mp4";
-        const path = `${user.id}/${Date.now()}.${ext}`;
+        const path = `\${user.id}/\${Date.now()}.\${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, audioBlob);
         if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
@@ -176,10 +198,10 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       const contents: any[] = [];
       
-      // Contexto como primeira mensagem do tipo user
+      // Prompt do sistema dinâmico como primeira mensagem do tipo user
       contents.push({
         role: "user",
-        parts: [{ text: ASSISTANT_CONTEXT }]
+        parts: [{ text: buildSystemPrompt(accounts, transactions) }]
       });
 
       // Histórico (últimas 10 mensagens)
@@ -198,9 +220,8 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      // Chamada direta à API do gemini-2.5-flash
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
       
       const response = await fetch(url, {
         method: "POST",
@@ -210,7 +231,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error(`[Gemini Error] Status: ${response.status}`, errorData);
+        console.error(`[Gemini Error] Status: \${response.status}`, errorData);
         
         if (response.status === 429) {
           throw new Error("Limite de requisições atingido. Tente novamente em alguns segundos.");
