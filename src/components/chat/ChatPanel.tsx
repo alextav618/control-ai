@@ -147,9 +147,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
     if (!user) return;
     if (!text.trim() && !imageData && !audioBlob) return;
     
-    // Log de depuração solicitado
-    console.log("API KEY carregada:", import.meta.env.VITE_GEMINI_API_KEY ? "SIM" : "NÃO");
-    
     setSending(true);
     try {
       let attachmentUrl: string | null = null;
@@ -223,7 +220,11 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       // Fallback para chave hardcoded se a variável de ambiente falhar
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${apiKey}`;
+      
+      // Log solicitado para depuração
+      console.log("Chave sendo usada:", apiKey?.slice(0, 10));
+
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
       
       const response = await fetch(url, {
         method: "POST",
