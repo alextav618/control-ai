@@ -104,7 +104,11 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
     });
 
   const callGemini = async (contents: any[], modelId: string): Promise<any> => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    // Temporariamente usando a chave direta para teste conforme solicitado
+    const apiKey = "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
+    console.log("API KEY (env):", import.meta.env.VITE_GEMINI_API_KEY);
+    console.log("Using Hardcoded Key for test:", apiKey);
+    
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
     
     const response = await fetch(url, {
@@ -182,13 +186,11 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       const contents: any[] = [];
       
-      // Primeira mensagem como contexto (role user conforme solicitado)
       contents.push({
         role: "user",
         parts: [{ text: ASSISTANT_CONTEXT }]
       });
 
-      // Histórico
       messages.slice(-10).forEach((m) => {
         contents.push({
           role: m.role === "assistant" ? "model" : "user",
@@ -196,7 +198,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         });
       });
 
-      // Mensagem atual
       const currentParts: any[] = [];
       if (text) currentParts.push({ text });
       if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
