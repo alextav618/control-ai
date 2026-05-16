@@ -146,7 +146,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
   const send = async () => {
     if (!user) return;
     if (!text.trim() && !imageData && !audioBlob) return;
-    
     setSending(true);
     try {
       let attachmentUrl: string | null = null;
@@ -199,11 +198,13 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       const contents: any[] = [];
       
+      // Prompt do sistema dinâmico como primeira mensagem do tipo user
       contents.push({
         role: "user",
         parts: [{ text: buildSystemPrompt(accounts, transactions) }]
       });
 
+      // Histórico (últimas 10 mensagens)
       messages.slice(-10).forEach((m) => {
         contents.push({
           role: m.role === "assistant" ? "model" : "user",
@@ -211,6 +212,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         });
       });
 
+      // Mensagem atual com anexos
       const currentParts: any[] = [];
       if (text) currentParts.push({ text });
       if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
@@ -218,13 +220,8 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      // Fallback para chave hardcoded se a variável de ambiente falhar
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "AIzaSyBB1PEpEFyS_yVupItAVsKcZbL5n39wOTw";
-      
-      // Log solicitado para depuração
-      console.log("Chave sendo usada:", apiKey?.slice(0, 10));
-
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${apiKey}`;
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
       
       const response = await fetch(url, {
         method: "POST",
