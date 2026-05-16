@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Trash2, Check, AlertCircle, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Hash, Loader2 } from "lucide-react";
+import { Plus, Trash2, Check, AlertCircle, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Hash } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { addMonths, startOfMonth, differenceInMonths, format } from "date-fns";
@@ -32,7 +32,7 @@ function BillsPage() {
   const qc = useQueryClient();
   
   // Controle de Mês Exibido
-  const [viewDate, setViewDate] = useState(new Date());
+  const [viewDate, setViewDate] = useState(new Date(2026, 4, 10)); // Ref: Maio 2026
   const currentMonth = viewDate.getMonth() + 1;
   const currentYear = viewDate.getFullYear();
 
@@ -45,14 +45,12 @@ function BillsPage() {
     category_id: "", 
     default_account_id: "",
     frequency: "monthly",
-    start_date: localDateString(new Date()),
+    start_date: localDateString(new Date(2026, 4, 1)),
     total_installments: ""
   });
 
-  // Estados para o lançamento rápido
   const [payOpen, setPayOpen] = useState<string | null>(null);
   const [payAmount, setPayAmount] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data: allBills = [] } = useQuery({
     queryKey: ["fixed-bills", user?.id],
@@ -96,20 +94,29 @@ function BillsPage() {
     enabled: !!user,
   });
 
+  // Lógica de Filtro por Frequência
   const visibleBills = useMemo(() => {
     return allBills.filter((bill: any) => {
       const startDate = new Date(bill.start_date + "T12:00:00");
       const targetDate = startOfMonth(viewDate);
+      
       const diffMonths = differenceInMonths(targetDate, startOfMonth(startDate));
-      if (diffMonths < 0) return false;
+      
+      if (diffMonths < 0) return false; // Ainda não começou
+
       const freqMeta = FREQUENCIES.find(f => f.value === (bill.frequency || "monthly"));
       const interval = freqMeta?.interval || 1;
+
+      // Verifica se o mês atual faz parte do ciclo (ex: a cada 6 meses)
       const isCycleMonth = diffMonths % interval === 0;
       if (!isCycleMonth) return false;
+
+      // Se houver limite de parcelas, verifica se já acabou
       if (bill.total_installments) {
         const installmentNum = (diffMonths / interval) + 1;
         if (installmentNum > bill.total_installments) return false;
       }
+
       return true;
     });
   }, [allBills, viewDate]);
@@ -117,13 +124,10 @@ function BillsPage() {
   const occByBill = new Map<string, any>();
   occs.forEach((o: any) => occByBill.set(o.fixed_bill_id, o));
 
-  const resetToToday = () => {
-    setViewDate(new Date());
-  };
-
   const create = async () => {
     if (!user || !form.name || !form.due_day) return;
     const expected = form.amount_kind === "fixed" ? Number(form.expected_amount) : 0;
+    
     const payload: any = {
       user_id: user.id,
       name: form.name,
@@ -136,6 +140,7 @@ function BillsPage() {
       start_date: form.start_date,
       total_installments: form.total_installments ? Number(form.total_installments) : null,
     };
+
     const { error } = await (supabase as any).from("fixed_bills").insert(payload);
     if (error) {
       toast.error(error.message);
@@ -145,7 +150,7 @@ function BillsPage() {
       setForm({ 
         name: "", expected_amount: "", due_day: "10", amount_kind: "fixed", 
         category_id: "", default_account_id: "", frequency: "monthly", 
-        start_date: localDateString(new Date()), total_installments: "" 
+        start_date: localDateString(new Date(2026, 4, 1)), total_installments: "" 
       });
       qc.invalidateQueries({ queryKey: ["fixed-bills"] });
     }
@@ -162,50 +167,38 @@ function BillsPage() {
     if (!user) return;
     if (!amountValue || amountValue <= 0) { toast.error("Informe o valor"); return; }
     
-    setIsSubmitting(true);
-    try {
-      const occurredOn = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(Math.min(bill.due_day, 28)).padStart(2, "0")}`;
-      
-      const { data: tx, error: txErr } = await supabase.from("transactions").insert({
-        user_id: user.id,
-        type: "expense",
-        amount: Number(amountValue),
-        description: `${bill.name} (${monthNames[currentMonth - 1]}/${currentYear})`,
-        occurred_on: occurredOn,
-        account_id: bill.default_account_id ?? null,
-        category_id: bill.category_id ?? null,
-        fixed_bill_id: bill.id,
-        status: "paid",
-        source: "manual",
-      }).select().single();
-      
-      if (txErr) throw txErr;
-      
-      await supabase.from("recurring_occurrences").upsert({
-        user_id: user.id,
-        fixed_bill_id: bill.id,
-        reference_month: currentMonth,
-        reference_year: currentYear,
-        amount: Number(amountValue),
-        status: "paid",
-        transaction_id: tx.id,
-      }, { onConflict: "fixed_bill_id,reference_month,reference_year" });
-      
-      toast.success("Lançamento confirmado");
-      setPayOpen(null);
-      setPayAmount("");
-      
-      // Atualização instantânea
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["occs"] }),
-        qc.invalidateQueries({ queryKey: ["transactions"] }),
-        qc.invalidateQueries({ queryKey: ["dashboard"] }),
-      ]);
-    } catch (e: any) {
-      toast.error(e.message);
-    } finally {
-      setIsSubmitting(false);
-    }
+    const occurredOn = `${currentYear}-${String(currentMonth).padStart(2, "0")}-${String(Math.min(bill.due_day, 28)).padStart(2, "0")}`;
+    
+    const { data: tx, error: txErr } = await supabase.from("transactions").insert({
+      user_id: user.id,
+      type: "expense",
+      amount: Number(amountValue),
+      description: `${bill.name} (${monthNames[currentMonth - 1]}/${currentYear})`,
+      occurred_on: occurredOn,
+      account_id: bill.default_account_id ?? null,
+      category_id: bill.category_id ?? null,
+      fixed_bill_id: bill.id,
+      status: "paid",
+      source: "manual",
+    }).select().single();
+    
+    if (txErr) { toast.error(txErr.message); return; }
+    
+    await supabase.from("recurring_occurrences").upsert({
+      user_id: user.id,
+      fixed_bill_id: bill.id,
+      reference_month: currentMonth,
+      reference_year: currentYear,
+      amount: Number(amountValue),
+      status: "paid",
+      transaction_id: tx.id,
+    }, { onConflict: "fixed_bill_id,reference_month,reference_year" });
+    
+    toast.success("Lançamento confirmado");
+    setPayOpen(null);
+    setPayAmount("");
+    qc.invalidateQueries({ queryKey: ["occs"] });
+    qc.invalidateQueries({ queryKey: ["transactions"] });
   };
 
   return (
@@ -220,8 +213,8 @@ function BillsPage() {
             </div>
             <Button variant="ghost" size="icon" onClick={() => setViewDate(addMonths(viewDate, 1))} className="h-9 w-9"><ChevronRight className="h-5 w-5" /></Button>
           </div>
-          <Button variant="outline" size="sm" onClick={resetToToday} className="rounded-xl h-11 px-4 gap-2 border-primary/20 hover:bg-primary/5">
-            <CalendarIcon className="h-4 w-4 text-primary" /> Hoje
+          <Button variant="outline" size="sm" onClick={() => setViewDate(new Date(2026, 4, 10))} className="rounded-xl h-11 px-4 gap-2">
+            <CalendarIcon className="h-4 w-4" /> Hoje
           </Button>
         </div>
 
@@ -236,6 +229,7 @@ function BillsPage() {
                 <Label>Nome da Despesa</Label>
                 <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Ex: Aluguel, Seguro, IPTU" className="mt-1.5" />
               </div>
+              
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Tipo de Valor</Label>
@@ -252,12 +246,14 @@ function BillsPage() {
                   <Input type="number" min={1} max={31} value={form.due_day} onChange={(e) => setForm({ ...form, due_day: e.target.value })} className="mt-1.5" />
                 </div>
               </div>
+
               {form.amount_kind === "fixed" && (
                 <div>
                   <Label>Valor Esperado (R$)</Label>
                   <Input type="number" step="0.01" value={form.expected_amount} onChange={(e) => setForm({ ...form, expected_amount: e.target.value })} className="mt-1.5" />
                 </div>
               )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Frequência (Ciclo)</Label>
@@ -273,6 +269,7 @@ function BillsPage() {
                   <Input type="date" value={form.start_date} onChange={(e) => setForm({ ...form, start_date: e.target.value })} className="mt-1.5" />
                 </div>
               </div>
+
               <div>
                 <Label className="flex items-center gap-2">
                   Total de Parcelas <span className="text-[10px] text-muted-foreground uppercase">(Opcional)</span>
@@ -280,6 +277,7 @@ function BillsPage() {
                 <Input type="number" placeholder="Vazio para permanente" value={form.total_installments} onChange={(e) => setForm({ ...form, total_installments: e.target.value })} className="mt-1.5" />
                 <p className="text-[10px] text-muted-foreground mt-1">Se preenchido, a despesa será removida da lista após a última parcela.</p>
               </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Categoria</Label>
@@ -300,6 +298,7 @@ function BillsPage() {
                   </Select>
                 </div>
               </div>
+
               <Button onClick={create} className="w-full mt-2">Salvar Despesa Fixa</Button>
             </div>
           </DialogContent>
@@ -310,6 +309,7 @@ function BillsPage() {
         <h2 className="font-display font-semibold text-xs text-muted-foreground uppercase tracking-widest px-1">
           Lançamentos Previstos para {format(viewDate, "MMMM", { locale: ptBR })}
         </h2>
+
         <div className="rounded-3xl border border-border bg-surface-1 overflow-hidden shadow-card">
           {visibleBills.length === 0 ? (
             <div className="p-16 text-center text-muted-foreground text-sm flex flex-col items-center gap-3">
@@ -321,7 +321,7 @@ function BillsPage() {
               {visibleBills.map((b: any) => {
                 const occ = occByBill.get(b.id);
                 const paid = occ?.status === "paid";
-                const isVar = b.amount_kind === "variable" || Number(b.expected_amount) === 0;
+                const isVar = b.amount_kind === "variable";
                 const displayAmount = paid ? Number(occ.amount) : Number(b.expected_amount);
                 const freqLabel = FREQUENCIES.find(f => f.value === b.frequency)?.label || "Mensal";
                 
@@ -355,52 +355,32 @@ function BillsPage() {
                           </div>
                         </div>
                       </div>
-                      
                       <div className="flex items-center gap-3">
-                        {!paid && isVar && (
-                          <div className="relative flex items-center animate-in fade-in slide-in-from-right-2">
-                            <span className="absolute left-2.5 text-[10px] font-bold text-muted-foreground">R$</span>
-                            <Input 
-                              type="number" 
-                              step="0.01" 
-                              placeholder="0,00"
-                              className="w-24 h-9 pl-7 text-xs font-mono bg-surface-2 border-border/50 focus:ring-primary/20"
-                              value={payOpen === b.id ? payAmount : ""}
-                              onChange={(e) => {
-                                setPayOpen(b.id);
-                                setPayAmount(e.target.value);
-                              }}
-                            />
-                          </div>
-                        )}
-                        
                         <span className={cn("font-mono tabular font-bold text-sm", paid ? "text-foreground" : "text-muted-foreground")}>
-                          {isVar && !paid ? "" : formatBRL(displayAmount)}
+                          {isVar && !paid ? "—" : formatBRL(displayAmount)}
                         </span>
-                        
                         {!paid && (
-                          <Button 
-                            size="sm" 
-                            variant={isVar ? "default" : "outline"}
-                            disabled={isSubmitting || (isVar && (!payAmount || Number(payAmount) <= 0 || payOpen !== b.id))}
-                            onClick={() => {
-                              if (isVar) {
-                                markPaid(b, Number(payAmount));
-                              } else {
-                                markPaid(b, Number(b.expected_amount));
-                              }
-                            }} 
-                            className={cn("rounded-lg h-9 px-4", isVar && "shadow-glow")}
-                          >
-                            {isSubmitting && payOpen === b.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Lançar"}
+                          <Button size="sm" variant="outline" onClick={() => { setPayOpen(b.id); setPayAmount(isVar ? "" : String(b.expected_amount)); }} className="rounded-lg">
+                            Lançar
                           </Button>
                         )}
-                        
-                        <Button size="icon" variant="ghost" onClick={() => remove(b.id)} className="opacity-0 group-hover:opacity-100 transition-opacity h-9 w-9">
+                        <Button size="icon" variant="ghost" onClick={() => remove(b.id)} className="opacity-0 group-hover:opacity-100 transition-opacity">
                           <Trash2 className="h-4 w-4 text-muted-foreground hover:text-destructive" />
                         </Button>
                       </div>
                     </div>
+                    {payOpen === b.id && (
+                      <div className="mt-4 flex items-center gap-3 p-4 rounded-2xl bg-surface-2 border border-border animate-in slide-in-from-top-2">
+                        <div className="flex-1">
+                          <Label className="text-[10px] uppercase font-bold text-muted-foreground">Valor pago</Label>
+                          <Input type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} autoFocus className="mt-1" />
+                        </div>
+                        <div className="flex gap-2 pt-5">
+                          <Button size="sm" onClick={() => markPaid(b, Number(payAmount))}>Confirmar</Button>
+                          <Button size="sm" variant="ghost" onClick={() => { setPayOpen(null); setPayAmount(""); }}>Cancelar</Button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}

@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Mic, Send, Image as ImageIcon, Loader2, X, Square } from "lucide-react";
 import { toast } from "sonner";
+import { formatBRL, localDateString } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { formatBRL } from "@/lib/format";
 
 type Msg = {
   id: string;
@@ -19,28 +19,21 @@ type Msg = {
   created_at: string;
 };
 
-const buildSystemPrompt = (accounts: any[], transactions: any[]) => {
-  const accountsList = accounts.map(a => `- \${a.name} (\${a.type}): \${formatBRL(a.current_balance)}`).join("\n");
-  const txList = transactions.slice(0, 20).map(t => `- \${t.occurred_on}: \${t.description} (\${t.type}) \${formatBRL(t.amount)}`).join("\n");
+const SYSTEM_PROMPT = `Atue como o motor de inteligência do IControl IA. Sua prioridade máxima é a precisão dos dados. Você é analítico, direto e pragmático.
 
-  return `Você é o assistente financeiro do IControl IA. Aqui estão os dados financeiros atuais do usuário:
+DIRETRIZES:
+1. Data de Referência: Hoje é 08/05/2026. Todos os cálculos e transações devem respeitar esta data e o fuso horário local.
+2. Tratamento de Data: Use sempre o formato YYYY-MM-DD.
+3. Feedback: Gere uma linha de feedback com emojis (🟢, 🟡, 🔴) para cada análise.
+4. Tom de Voz: Profissional.
 
-CONTAS:
-\${accountsList || "Nenhuma conta cadastrada."}
-
-ÚLTIMAS TRANSAÇÕES:
-\${txList || "Nenhuma transação recente."}
-
-Regras de comportamento:
-- Seja sempre resumido, máximo 3 linhas por resposta
-- Use emojis para tornar a conversa mais leve e amigável
-- NUNCA use asteriscos (**texto**) para destacar palavras. Use apenas emojis ou letras maiúsculas quando precisar enfatizar algo
-- Quando o usuário registrar uma DESPESA, dê um feedback rápido sobre o impacto no saldo e um conselho curto
-- Quando o usuário registrar uma RECEITA ou INVESTIMENTO, comemore com entusiasmo e incentive a continuar
-- Quando o usuário perguntar sobre suas finanças, responda com base nos dados reais das contas e transações acima
-- Fale em português brasileiro de forma descontraída mas profissional
-- Nunca invente dados que não estejam no contexto fornecido`;
-};
+REGRAS DE NEGÓCIO:
+- Analise gastos contra o orçamento mensal.
+- Identifique padrões de consumo.
+- DESPESAS FIXAS: Referem-se a gastos recorrentes (ex: aluguel, luz, assinaturas). Use o termo 'Despesa Fixa' em vez de 'Recorrente'.
+- TRANSFERÊNCIAS: Movimentações entre contas do usuário (ex: Pix para si mesmo, pagamento de fatura) são do tipo 'transfer'.
+- Uma 'transfer' deve ter 'account_id' (origem) e 'to_account_id' (destino).
+- Transferências NÃO são receita nem despesa e não afetam o fluxo de caixa real, apenas o saldo das contas envolvidas.`;
 
 export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
   const { user } = useAuth();
@@ -69,20 +62,14 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
     enabled: !!user,
   });
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ["accounts", user?.id],
+  const { data: contextData } = useQuery({
+    queryKey: ["chat-context", user?.id],
     queryFn: async () => {
-      const { data } = await supabase.from("accounts").select("*").eq("archived", false);
-      return data ?? [];
-    },
-    enabled: !!user,
-  });
-
-  const { data: transactions = [] } = useQuery({
-    queryKey: ["transactions", user?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from("transactions").select("*").order("occurred_on", { ascending: false }).limit(20);
-      return data ?? [];
+      const [accR, profR] = await Promise.all([
+        supabase.from("accounts").select("*").eq("archived", false),
+        supabase.from("profiles").select("*").eq("id", user!.id).maybeSingle(),
+      ]);
+      return { accounts: accR.data, profile: profR.data };
     },
     enabled: !!user,
   });
@@ -143,6 +130,25 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       r.readAsDataURL(blob);
     });
 
+  const callGemini = async (contents: any[], modelId: string): Promise<any> => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error(`[Gemini Error] Status: ${response.status}`, errorData);
+      throw { status: response.status, message: errorData.error?.message || "Erro na API do Gemini" };
+    }
+
+    return response.json();
+  };
+
   const send = async () => {
     if (!user) return;
     if (!text.trim() && !imageData && !audioBlob) return;
@@ -157,7 +163,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       if (imageData) {
         const blob = await (await fetch(imageData.base64)).blob();
         const ext = blob.type.split("/")[1] ?? "jpg";
-        const path = `\${user.id}/\${Date.now()}.\${ext}`;
+        const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, blob);
         if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
@@ -169,7 +175,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       if (audioBlob) {
         const ext = audioBlob.type.includes("webm") ? "webm" : "mp4";
-        const path = `\${user.id}/\${Date.now()}.\${ext}`;
+        const path = `${user.id}/${Date.now()}.${ext}`;
         const { error: upErr } = await supabase.storage.from("chat-attachments").upload(path, audioBlob);
         if (!upErr) {
           const { data: signed } = await supabase.storage.from("chat-attachments").createSignedUrl(path, 60 * 60 * 24 * 365);
@@ -196,15 +202,30 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
 
       qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, userMsg as Msg]);
 
+      const today = "2026-05-08";
+      let ctxText = `=== CONTEXTO ATUAL ===\nData de hoje: ${today}\n`;
+      if (contextData?.profile?.display_name) ctxText += `Usuário: ${contextData.profile.display_name}\n`;
+      if (contextData?.profile?.monthly_budget) ctxText += `Orçamento: R$ ${contextData.profile.monthly_budget}\n`;
+      if (contextData?.accounts?.length) {
+        ctxText += "\nContas/Cartões:\n";
+        contextData.accounts.forEach((a: any) => {
+          const extra = a.type === "credit_card" ? " (Cartão)" : ` (Saldo: R$ ${a.current_balance})`;
+          ctxText += `- ${a.name}${extra}\n`;
+        });
+      }
+
       const contents: any[] = [];
       
-      // Prompt do sistema dinâmico como primeira mensagem do tipo user
       contents.push({
         role: "user",
-        parts: [{ text: buildSystemPrompt(accounts, transactions) }]
+        parts: [{ text: `${SYSTEM_PROMPT}\n\n${ctxText}\n\nEntendido? Responda apenas confirmando que está pronto.` }]
       });
 
-      // Histórico (últimas 10 mensagens)
+      contents.push({
+        role: "model",
+        parts: [{ text: "Entendido. Estou pronto para atuar como o motor de inteligência do IControl IA com a data de referência 08/05/2026. Como posso ajudar hoje?" }]
+      });
+
       messages.slice(-10).forEach((m) => {
         contents.push({
           role: m.role === "assistant" ? "model" : "user",
@@ -212,7 +233,6 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         });
       });
 
-      // Mensagem atual com anexos
       const currentParts: any[] = [];
       if (text) currentParts.push({ text });
       if (imageBase64) currentParts.push({ inline_data: { mime_type: "image/jpeg", data: imageBase64 } });
@@ -220,30 +240,19 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
       
       contents.push({ role: "user", parts: currentParts });
 
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=\${apiKey}`;
-      
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contents }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        console.error(`[Gemini Error] Status: \${response.status}`, errorData);
-        
-        if (response.status === 429) {
-          throw new Error("Limite de requisições atingido. Tente novamente em alguns segundos.");
+      let result;
+      try {
+        result = await callGemini(contents, "gemini-2.5-flash");
+      } catch (e: any) {
+        if (e.status === 404) {
+          console.warn("Modelo gemini-2.5-flash não encontrado, tentando fallback para gemini-2.0-flash...");
+          result = await callGemini(contents, "gemini-2.0-flash");
+        } else {
+          throw e;
         }
-        
-        throw new Error(errorData.error?.message || "Erro na API do Gemini");
       }
 
-      const data = await response.json();
-      console.log("Resposta da API:", data);
-
-      const assistantText = data.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
+      const assistantText = result.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui processar sua mensagem.";
       
       const { data: aMsg, error: aInsErr } = await supabase
         .from("chat_messages")
@@ -251,6 +260,7 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
           user_id: user.id,
           role: "assistant",
           content: assistantText,
+          metadata: { actions: result.metadata?.actions ?? [] },
         })
         .select()
         .single();
@@ -259,10 +269,16 @@ export function ChatPanel({ autoFocus = false }: { autoFocus?: boolean }) {
         qc.setQueryData(["chat-messages", user.id], (old: Msg[] = []) => [...old, aMsg as Msg]);
       }
       
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+
       setText("");
       setImageData(null);
       setAudioBlob(null);
     } catch (e: any) {
+      console.error('[Chat Error]', e);
       toast.error(e.message || "Erro inesperado no chat");
     } finally {
       setSending(false);
@@ -358,6 +374,7 @@ function EmptyState() {
 
 function MessageBubble({ msg }: { msg: Msg }) {
   const isUser = msg.role === "user";
+  const actions = msg.metadata?.actions ?? [];
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div className={cn("max-w-[85%] md:max-w-[70%] space-y-2")}>
@@ -377,7 +394,43 @@ function MessageBubble({ msg }: { msg: Msg }) {
           )}
           <div className="whitespace-pre-wrap text-sm">{msg.content}</div>
         </div>
+        {!isUser && actions.length > 0 && actions.map((a: any, i: number) => (
+          <ActionCard key={i} action={a} />
+        ))}
       </div>
     </div>
   );
+}
+
+function ActionCard({ action }: { action: any }) {
+  if (action.type === "transaction") {
+    const t = action.transaction;
+    const level = t.audit_level;
+    const dot =
+      level === "green" ? "bg-audit-green" :
+      level === "yellow" ? "bg-audit-yellow" :
+      level === "red" ? "bg-audit-red" : "bg-muted-foreground";
+    return (
+      <div className="rounded-xl bg-surface-1 border border-border px-4 py-3 text-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={cn("h-2 w-2 rounded-full shrink-0", dot)} />
+            <span className="truncate">{t.description}</span>
+          </div>
+          <span className={cn("font-mono tabular font-semibold shrink-0", t.type === "income" ? "text-income" : "text-expense")}>
+            {t.type === "income" ? "+" : "-"}{formatBRL(Number(t.amount))}
+          </span>
+        </div>
+        {t.audit_reason && <p className="text-xs text-muted-foreground mt-1.5">{t.audit_reason}</p>}
+      </div>
+    );
+  }
+  if (action.type === "account") return <Tag>Conta criada: {action.account.name}</Tag>;
+  if (action.type === "fixed_bill") return <Tag>Despesa fixa: {action.bill.name}</Tag>;
+  if (action.type === "error") return <div className="text-xs text-destructive">⚠ {action.message}</div>;
+  return null;
+}
+
+function Tag({ children }: { children: React.ReactNode }) {
+  return <div className="inline-block text-xs px-2.5 py-1 rounded-md bg-surface-2 border border-border text-muted-foreground">{children}</div>;
 }
